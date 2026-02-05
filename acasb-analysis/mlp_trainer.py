@@ -98,18 +98,18 @@ class MLPTrainer:
             )
             
             mlp = MLPClassifier(
-                hidden_layer_sizes=(64, 32, 16),
+                hidden_layer_sizes=(128, 64, 32),
                 activation='relu',
                 solver='adam',
                 alpha=0.0001,
                 batch_size=32,
                 learning_rate='adaptive',
                 learning_rate_init=0.001,
-                max_iter=500,
+                max_iter=2000,
                 random_state=42,
                 early_stopping=True,
                 validation_fraction=0.1,
-                n_iter_no_change=10,
+                n_iter_no_change=50,
                 verbose=True
             )
             
