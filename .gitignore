@@ -31,3 +31,16 @@ build/
 
 ### VS Code ###
 .vscode/
+.trae/
+
+### ACASB Specific ###
+temp_package/
+ACASB_Package_*.zip
+output/
+temp/
+packages/
+*.jpg
+*.pkl
+*.pyc
+__pycache__/
+*.log

@@ -13,8 +13,7 @@ public class TestController {
 
     @GetMapping("/testPython")
     public String test() {
-        // 请求 Python 服务的 ping 接口
-        String url = "http://localhost:5000/ping";
+        String url = "http://localhost:5000/health";
         return restTemplate.getForObject(url, String.class);
     }
 }

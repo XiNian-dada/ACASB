@@ -1,0 +1,122 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: 'maven'
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          ${{ runner.os }}-maven-
+
+    - name: Build Java project
+      run: |
+        echo "Building Java project with Maven..."
+        .\mvnw.cmd clean package -DskipTests
+
+    - name: Verify JAR file
+      run: |
+        if (Test-Path "target\ACASB-0.0.1-SNAPSHOT.jar") {
+          Write-Host "JAR file created successfully"
+          Get-Item target\ACASB-0.0.1-SNAPSHOT.jar | Select-Object Name, Length
+        } else {
+          Write-Error "JAR file not found"
+          exit 1
+        }
+
+    - name: Install Python dependencies
+      run: |
+        echo "Installing Python dependencies..."
+        cd acasb-analysis
+        pip install -r requirements.txt
+
+    - name: Run build package script
+      run: |
+        echo "Running build package script..."
+        python build_package.py
+
+    - name: Get package filename
+      id: package
+      run: |
+        $package = Get-ChildItem -Path . -Filter "ACASB_Package_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($package) {
+          $filename = $package.Name
+          Write-Host "Package filename: $filename"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "filename=$filename"
+        } else {
+          Write-Error "Package file not found"
+          exit 1
+        }
+
+    - name: Upload package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ACASB-Package
+        path: ${{ steps.package.outputs.filename }}
+        retention-days: 30
+
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ${{ steps.package.outputs.filename }}
+        tag_name: v${{ github.run_number }}
+        name: Release ${{ github.run_number }}
+        body: |
+          Automated release from commit ${{ github.sha }}
+          
+          ## Changes
+          - Built from commit ${{ github.sha }}
+          - Package created at ${{ github.event.head_commit.timestamp }}
+          
+          ## Installation
+          1. Download the ZIP file
+          2. Extract to desired location
+          3. Run `start_python.bat` to start Python API service
+          4. Run `start_java.bat` to start Java backend service
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build Summary
+      run: |
+        echo "## Build Summary" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "### Build Status: ✅ Success" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **Java Version**: 17" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **Python Version**: 3.11" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **Package**: ${{ steps.package.outputs.filename }}" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "### Artifacts" >> $env:GITHUB_STEP_SUMMARY
+        echo "The package has been uploaded as an artifact and is available for download." >> $env:GITHUB_STEP_SUMMARY
