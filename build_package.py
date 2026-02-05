@@ -1,8 +1,12 @@
 import os
+import sys
+import io
 import shutil
 import subprocess
 import zipfile
 from datetime import datetime
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 def run_command(cmd, cwd=None):
     print(f"执行命令: {cmd}")
