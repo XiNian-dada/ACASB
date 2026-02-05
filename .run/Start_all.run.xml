@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Start_all" type="CompoundRunConfigurationType">
+    <toRun name="acasb-analysis" type="PythonConfigurationType" />
+    <toRun name="AcasbApplication" type="SpringBootApplicationConfigurationType" />
+    <method v="2" />
+  </configuration>
+</component>
