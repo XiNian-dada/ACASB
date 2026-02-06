@@ -1,5 +1,6 @@
 package com.leeinx.acasb.controller;
 
+import com.leeinx.acasb.dto.BatchUploadResult;
 import com.leeinx.acasb.dto.ImageFeatures;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
 import com.leeinx.acasb.entity.BuildingAnalysis;
@@ -17,7 +18,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -162,6 +165,114 @@ public class dataController {
             result.put("success", false);
             result.put("message", "查询失败: " + e.getMessage());
             e.printStackTrace();
+        }
+        
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/batch")
+    public ResponseEntity<BatchUploadResult> batchUpload(@RequestParam("files") MultipartFile[] files) {
+        BatchUploadResult result = new BatchUploadResult();
+        result.setTotalCount(files.length);
+        result.setSuccessCount(0);
+        result.setFailureCount(0);
+        result.setItems(new ArrayList<>());
+        
+        if (files == null || files.length == 0) {
+            return ResponseEntity.ok(result);
+        }
+        
+        Path tempDir = Paths.get(tempFolder).toAbsolutePath().normalize();
+        if (!Files.exists(tempDir)) {
+            try {
+                Files.createDirectories(tempDir);
+            } catch (IOException e) {
+                result.setFailureCount(files.length);
+                return ResponseEntity.ok(result);
+            }
+        }
+        
+        for (MultipartFile file : files) {
+            BatchUploadResult.UploadItemResult itemResult = new BatchUploadResult.UploadItemResult();
+            itemResult.setFileName(file.getOriginalFilename());
+            
+            try {
+                String originalFilename = file.getOriginalFilename();
+                String fileExtension = originalFilename.substring(originalFilename.lastIndexOf("."));
+                String uniqueFilename = UUID.randomUUID().toString() + fileExtension;
+                
+                Path filePath = tempDir.resolve(uniqueFilename);
+                file.transferTo(filePath.toFile());
+                
+                Map<String, String> request = new HashMap<>();
+                request.put("image_path", filePath.toAbsolutePath().toString());
+                
+                String pythonUrl = "http://localhost:5000/analyze";
+                ImageFeatures imageFeatures = restTemplate.postForObject(pythonUrl, request, ImageFeatures.class);
+                
+                if (imageFeatures != null && imageFeatures.isSuccess()) {
+                    BuildingAnalysis analysis = new BuildingAnalysis();
+                    analysis.setImagePath(filePath.toAbsolutePath().toString());
+                    analysis.setRatioYellow(imageFeatures.getRatioYellow());
+                    analysis.setRatioRed1(imageFeatures.getRatioRed1());
+                    analysis.setRatioRed2(imageFeatures.getRatioRed2());
+                    analysis.setRatioBlue(imageFeatures.getRatioBlue());
+                    analysis.setRatioGreen(imageFeatures.getRatioGreen());
+                    analysis.setRatioGrayWhite(imageFeatures.getRatioGrayWhite());
+                    analysis.setRatioBlack(imageFeatures.getRatioBlack());
+                    analysis.setHMean(imageFeatures.getHMean());
+                    analysis.setHStd(imageFeatures.getHStd());
+                    analysis.setSMean(imageFeatures.getSMean());
+                    analysis.setSStd(imageFeatures.getSStd());
+                    analysis.setVMean(imageFeatures.getVMean());
+                    analysis.setVStd(imageFeatures.getVStd());
+                    analysis.setEdgeDensity(imageFeatures.getEdgeDensity());
+                    analysis.setEntropy(imageFeatures.getEntropy());
+                    analysis.setContrast(imageFeatures.getContrast());
+                    analysis.setDissimilarity(imageFeatures.getDissimilarity());
+                    analysis.setHomogeneity(imageFeatures.getHomogeneity());
+                    analysis.setAsm(imageFeatures.getAsm());
+                    analysis.setRoyalRatio(imageFeatures.getRoyalRatio());
+                    
+                    BuildingAnalysis savedAnalysis = buildingAnalysisService.saveAnalysis(analysis);
+                    
+                    pythonUrl = "http://localhost:5000/predict";
+                    ImageAnalysisResult predictionResult = restTemplate.postForObject(pythonUrl, request, ImageAnalysisResult.class);
+                    
+                    if (predictionResult != null && predictionResult.isSuccess()) {
+                        BuildingType buildingType = new BuildingType();
+                        buildingType.setImagePath(filePath.toAbsolutePath().toString());
+                        buildingType.setPrediction(predictionResult.getPrediction());
+                        buildingType.setConfidence(predictionResult.getConfidence());
+                        buildingType.setAnalysisId(savedAnalysis.getId());
+                        
+                        buildingTypeService.saveType(buildingType);
+                        
+                        itemResult.setAnalysisId(savedAnalysis.getId());
+                        itemResult.setTypeId(buildingType.getId());
+                        itemResult.setSuccess(true);
+                        itemResult.setMessage("上传成功");
+                        result.setSuccessCount(result.getSuccessCount() + 1);
+                    } else {
+                        itemResult.setSuccess(false);
+                        itemResult.setMessage("预测失败");
+                        result.setFailureCount(result.getFailureCount() + 1);
+                    }
+                } else {
+                    itemResult.setSuccess(false);
+                    itemResult.setMessage("图像分析失败");
+                    result.setFailureCount(result.getFailureCount() + 1);
+                }
+                
+                Files.deleteIfExists(filePath);
+                
+            } catch (Exception e) {
+                itemResult.setSuccess(false);
+                itemResult.setMessage("处理失败: " + e.getMessage());
+                result.setFailureCount(result.getFailureCount() + 1);
+            }
+            
+            result.getItems().add(itemResult);
         }
         
         return ResponseEntity.ok(result);
