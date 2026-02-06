@@ -27,9 +27,10 @@
   * MLP 分类器进行建筑类型识别（皇家/民间）
   * 特征提取：色彩分析、纹理特征、边缘密度等
 
-* **数据持久层 (Database)**: **OceanBase (社区版) / PostgreSQL**
+* **数据持久层 (Database)**: **OceanBase (社区版)**
   * 支撑"常读不常写、单个数据量大"的高并发读取场景
   * 确保礼制数据的一致性
+  * 使用 MySQL 兼容驱动连接
 
 ### 服务架构
 
@@ -90,17 +91,35 @@ ACASB/
 │   └── main/
 │       ├── java/com/leeinx/acasb/
 │       │   ├── AcasbApplication.java      # Spring Boot 主类
-│       │   ├── TestController.java         # 测试控制器
-│       │   ├── PredictionController.java    # 预测 API 控制器
-│       │   ├── PredictionRequest.java      # 预测请求 DTO
-│       │   └── dto/                       # 数据传输对象
+│       │   ├── controller/                    # 控制器层
+│       │   │   ├── ImageController.java    # 图像预测 API
+│       │   │   └── DataController.java     # 数据管理 API
+│       │   ├── service/                       # 服务层
+│       │   │   ├── BuildingAnalysisService.java
+│       │   │   └── BuildingTypeService.java
+│       │   ├── mapper/                        # 数据访问层
+│       │   │   ├── BuildingAnalysisMapper.java
+│       │   │   └── BuildingTypeMapper.java
+│       │   ├── entity/                        # 数据库实体
+│       │   │   ├── BuildingAnalysis.java
+│       │   │   └── BuildingType.java
+│       │   ├── dto/                           # 数据传输对象
+│       │   │   ├── ImageFeatures.java
+│       │   │   └── ImageAnalysisResult.java
+│       │   ├── config/                        # 配置类
+│       │   │   └── DatabaseInitializer.java # 数据库表初始化
+│       │   └── jwt/                           # JWT 工具
+│       │       └── JwtUtils.java
 │       └── resources/
-│           └── application.properties      # 应用配置
+│           ├── application.properties      # 应用配置
+│           └── sql/                     # SQL 脚本
+│               └── init.sql
 ├── acasb-analysis/                         # Python 分析引擎
 │   ├── api_server.py                      # FastAPI 服务入口
 │   ├── mlp_inference.py                  # MLP 推理模块
 │   ├── mlp_trainer.py                    # MLP 训练模块
 │   ├── ancient_arch_extractor.py          # 特征提取器
+│   ├── create_tables.py                  # 数据库表创建脚本
 │   ├── models/                           # 训练好的模型
 │   │   ├── mlp_model.pkl
 │   │   └── scaler.pkl
@@ -168,18 +187,76 @@ ACASB/
 ### 验证安装
 
 ```bash
-# 检查 Java 服务
+# 检查 Java 服务健康状态
 curl http://localhost:8080/api/health
 
-# 检查 Python 服务
+# 检查 Python 服务健康状态
 curl http://localhost:5000/health
+
+# 测试数据库连接（启动后会自动创建表）
+# 查看日志输出，确认 "数据库表初始化完成！"
+```
+
+### 测试数据上传
+
+使用 PowerShell 上传测试图片：
+
+```powershell
+# 准备上传脚本
+$filePath = "E:\Code\ACASB\2.jpg"
+$uri = "http://localhost:8080/data/add"
+
+$boundary = [System.Guid]::NewGuid().ToString()
+$LF = "`r`n"
+
+$fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+$fileName = Split-Path $filePath -Leaf
+
+$header = "--$boundary$LF"
+$header += "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"$LF"
+$header += "Content-Type: application/octet-stream$LF"
+$header += "$LF"
+
+$footer = "$LF--$boundary--$LF"
+
+$memStream = New-Object System.IO.MemoryStream
+$writer = New-Object System.IO.BinaryWriter($memStream)
+
+$writer.Write([System.Text.Encoding]::GetEncoding("iso-8859-1").GetBytes($header))
+$writer.Write($fileBytes)
+$writer.Write([System.Text.Encoding]::GetEncoding("iso-8859-1").GetBytes($footer))
+$writer.Flush()
+
+$response = Invoke-RestMethod -Uri $uri -Method POST -ContentType "multipart/form-data; boundary=$boundary" -Body $memStream.ToArray()
+$response | ConvertTo-Json -Depth 10
+```
+
+预期响应：
+
+```json
+{
+  "success": true,
+  "message": "数据添加成功",
+  "analysisId": 1,
+  "typeId": 1
+}
+```
+
+### 测试数据查询
+
+```bash
+# 查询分析信息
+curl "http://localhost:8080/data/analysis/1"
+
+# 查询建筑类型
+curl "http://localhost:8080/data/type/1"
 ```
 
 ---
 
 ## 📖 API 使用 (API Usage)
 
-### 预测接口
+### 1. 图像预测接口
 
 **端点**: `POST /api/predict`
 
@@ -222,7 +299,171 @@ Invoke-RestMethod -Uri "http://localhost:8080/api/predict" -Method POST -Content
 - `edge_density`: 边缘密度（结构复杂度）
 - `texture_complexity`: 纹理对比度
 
-### 健康检查接口
+### 2. 图像分析接口
+
+**端点**: `POST /api/analyze`
+
+**请求格式**:
+```json
+{
+  "image_path": "图片文件的绝对路径"
+}
+```
+
+**响应格式**:
+```json
+{
+  "success": true,
+  "message": "Analysis completed",
+  "ratio_yellow": 0.0537,
+  "ratio_red_1": 0.1669,
+  "ratio_red_2": 0.0488,
+  "ratio_blue": 0.2628,
+  "ratio_green": 0.0502,
+  "ratio_gray_white": 0.1234,
+  "ratio_black": 0.2942,
+  "h_mean": 0.1234,
+  "h_std": 0.0567,
+  "s_mean": 0.4567,
+  "s_std": 0.2345,
+  "v_mean": 0.6789,
+  "v_std": 0.1234,
+  "edge_density": 0.3456,
+  "entropy": 7.8901,
+  "contrast": 0.2345,
+  "dissimilarity": 0.1234,
+  "homogeneity": 0.8901,
+  "asm": 0.0123,
+  "royal_ratio": 0.2694
+}
+```
+
+**说明**: 此接口仅提取图像特征，不进行预测，用于性能优化场景。
+
+### 3. 数据上传接口
+
+**端点**: `POST /data/add`
+
+**请求格式**: `multipart/form-data`
+
+**PowerShell 示例**:
+```powershell
+$filePath = "E:\Code\ACASB\2.jpg"
+$uri = "http://localhost:8080/data/add"
+
+$boundary = [System.Guid]::NewGuid().ToString()
+$LF = "`r`n"
+
+$fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+$fileName = Split-Path $filePath -Leaf
+
+$header = "--$boundary$LF"
+$header += "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"$LF"
+$header += "Content-Type: application/octet-stream$LF"
+$header += "$LF"
+
+$footer = "$LF--$boundary--$LF"
+
+$memStream = New-Object System.IO.MemoryStream
+$writer = New-Object System.IO.BinaryWriter($memStream)
+
+$writer.Write([System.Text.Encoding]::GetEncoding("iso-8859-1").GetBytes($header))
+$writer.Write($fileBytes)
+$writer.Write([System.Text.Encoding]::GetEncoding("iso-8859-1").GetBytes($footer))
+$writer.Flush()
+
+$response = Invoke-RestMethod -Uri $uri -Method POST -ContentType "multipart/form-data; boundary=$boundary" -Body $memStream.ToArray()
+$response | ConvertTo-Json -Depth 10
+```
+
+**响应格式**:
+```json
+{
+  "success": true,
+  "message": "数据添加成功",
+  "analysisId": 1,
+  "typeId": 1
+}
+```
+
+**响应字段说明**:
+- `success`: 请求是否成功
+- `message`: 操作结果消息
+- `analysisId`: 分析信息记录 ID
+- `typeId`: 建筑类型记录 ID
+
+**功能说明**:
+1. 接收上传的图片文件
+2. 调用 Python 服务进行特征提取和预测
+3. 将分析信息存储到 `building_analysis` 表
+4. 将预测结果存储到 `building_type` 表
+5. 自动删除临时文件
+6. 返回生成的记录 ID
+
+### 4. 数据查询接口
+
+**查询分析信息**: `GET /data/analysis/{id}`
+
+```bash
+curl "http://localhost:8080/data/analysis/1"
+```
+
+**响应格式**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "imagePath": "E:\\Code\\ACASB\\temp\\xxx.jpg",
+    "ratioYellow": 0.0537,
+    "ratioRed1": 0.1669,
+    "ratioRed2": 0.0488,
+    "ratioBlue": 0.2628,
+    "ratioGreen": 0.0502,
+    "ratioGrayWhite": 0.1234,
+    "ratioBlack": 0.2942,
+    "hMean": 0.1234,
+    "hStd": 0.0567,
+    "sMean": 0.4567,
+    "sStd": 0.2345,
+    "vMean": 0.6789,
+    "vStd": 0.1234,
+    "edgeDensity": 0.3456,
+    "entropy": 7.8901,
+    "contrast": 0.2345,
+    "dissimilarity": 0.1234,
+    "homogeneity": 0.8901,
+    "asm": 0.0123,
+    "royalRatio": 0.2694,
+    "createTime": "2026-02-06T18:29:42",
+    "updateTime": "2026-02-06T18:29:42"
+  }
+}
+```
+
+**查询建筑类型**: `GET /data/type/{id}`
+
+```bash
+curl "http://localhost:8080/data/type/1"
+```
+
+**响应格式**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "imagePath": "E:\\Code\\ACASB\\temp\\xxx.jpg",
+    "prediction": "royal",
+    "confidence": 0.9973,
+    "analysisId": 1,
+    "createTime": "2026-02-06T18:29:42",
+    "updateTime": "2026-02-06T18:29:42"
+  }
+}
+```
+
+### 5. 健康检查接口
 
 **Java Backend**: `GET /api/health`
 ```bash
@@ -282,11 +523,47 @@ ACASB_Package_YYYYMMDD_HHMMSS.zip
 编辑 `src/main/resources/application.properties`:
 
 ```properties
-# OceanBase / MySQL 配置
-spring.datasource.url=jdbc:mysql://localhost:2881/acasb?useSSL=false
-spring.datasource.username=root
-spring.datasource.password=password
+# OceanBase 配置（使用 MySQL 兼容驱动）
+spring.datasource.url=jdbc:mysql://192.168.1.199:2881/test?useSSL=false&allowPublicKeyRetrieval=true
+spring.datasource.username=root@test
+spring.datasource.password=
 spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+
+# MyBatis-Plus 配置
+mybatis-plus.configuration.map-underscore-to-camel-case=true
+```
+
+**数据库表结构**:
+
+应用启动时会自动创建以下表：
+
+1. **building_analysis** - 建筑分析信息表
+   - 存储图像的 19 维特征向量
+   - 包含色彩、纹理、结构特征
+   - 自动记录创建和更新时间
+
+2. **building_type** - 建筑类型表
+   - 存储预测结果（royal/civilian）
+   - 关联 building_analysis 表
+   - 记录预测置信度
+
+**手动创建表**（可选）:
+
+如果需要手动创建表，可以运行 Python 脚本：
+
+```bash
+cd acasb-analysis
+python create_tables.py
+```
+
+或使用 SQL 脚本：
+
+```bash
+# 使用 obclient 连接 OceanBase
+obclient -h192.168.1.199 -P2881 -uroot@test -Dtest
+
+# 执行初始化脚本
+source src/main/resources/sql/init.sql
 ```
 
 ### 训练自定义模型

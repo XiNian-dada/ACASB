@@ -8,8 +8,4 @@ public class ImageAnalysisResult {
     private String message;
     private String prediction;
     private double confidence;
-    private double royalRatio;
-    private double entropyScore;
-    private double edgeDensity;
-    private double textureComplexity;
 }

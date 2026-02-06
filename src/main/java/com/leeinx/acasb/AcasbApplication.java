@@ -1,9 +1,9 @@
 package com.leeinx.acasb;
 
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.web.client.RestTemplate;
 
@@ -11,7 +11,8 @@ import com.leeinx.acasb.jwt.JwtUtils;
 
 //ACASB Ancient Chinese Architecture in Spring Boot
 
-@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class})
+@SpringBootApplication
+@MapperScan("com.leeinx.acasb.mapper")
 public class AcasbApplication implements CommandLineRunner{
     public static void main(String[] args) {
         SpringApplication.run(AcasbApplication.class, args);

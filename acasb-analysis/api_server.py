@@ -4,7 +4,7 @@ import uvicorn
 import logging
 import os
 import tempfile
-from typing import Dict
+from typing import Dict, Optional
 from ancient_arch_extractor import AncientArchExtractor
 from mlp_inference import MLPInference
 import joblib
@@ -51,10 +51,32 @@ class PredictResponse(BaseModel):
     message: str
     prediction: str = None
     confidence: float = None
-    royal_ratio: float = None
-    entropy_score: float = None
+
+class AnalyzeResponse(BaseModel):
+    success: bool
+    message: str
+    prediction: Optional[str] = None
+    confidence: Optional[float] = None
+    ratio_yellow: float = None
+    ratio_red_1: float = None
+    ratio_red_2: float = None
+    ratio_blue: float = None
+    ratio_green: float = None
+    ratio_gray_white: float = None
+    ratio_black: float = None
+    h_mean: float = None
+    h_std: float = None
+    s_mean: float = None
+    s_std: float = None
+    v_mean: float = None
+    v_std: float = None
     edge_density: float = None
-    texture_complexity: float = None
+    entropy: float = None
+    contrast: float = None
+    dissimilarity: float = None
+    homogeneity: float = None
+    asm: float = None
+    royal_ratio: float = None
 
 @app.get("/health")
 async def health_check() -> Dict[str, str]:
@@ -206,13 +228,71 @@ async def predict_image(request: PredictRequest) -> Dict:
         
         logger.info(f"Prediction completed: {result['prediction']}")
         
-        return result
+        return {
+            "success": result["success"],
+            "message": result["message"],
+            "prediction": result["prediction"],
+            "confidence": result["confidence"]
+        }
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+@app.post("/analyze", response_model=AnalyzeResponse)
+async def analyze_image(request: PredictRequest) -> Dict:
+    try:
+        logger.info(f"Analyze request received: {request.image_path}")
+        
+        if not os.path.exists(request.image_path):
+            raise HTTPException(status_code=404, detail=f"Image file not found: {request.image_path}")
+        
+        feature_dict, feature_vector = extractor.extract_features(request.image_path)
+        
+        if len(feature_vector) == 0:
+            logger.error("Failed to extract features!")
+            raise HTTPException(status_code=500, detail="Failed to extract features")
+        
+        royal_ratio = feature_dict.get('ratio_yellow', 0) + feature_dict.get('ratio_red_1', 0) + feature_dict.get('ratio_red_2', 0)
+        
+        result = {
+            "success": True,
+            "message": "Analysis completed",
+            "prediction": None,
+            "confidence": None,
+            "ratio_yellow": round(feature_dict.get('ratio_yellow', 0), 4),
+            "ratio_red_1": round(feature_dict.get('ratio_red_1', 0), 4),
+            "ratio_red_2": round(feature_dict.get('ratio_red_2', 0), 4),
+            "ratio_blue": round(feature_dict.get('ratio_blue', 0), 4),
+            "ratio_green": round(feature_dict.get('ratio_green', 0), 4),
+            "ratio_gray_white": round(feature_dict.get('ratio_gray_white', 0), 4),
+            "ratio_black": round(feature_dict.get('ratio_black', 0), 4),
+            "h_mean": round(feature_dict.get('h_mean', 0), 4),
+            "h_std": round(feature_dict.get('h_std', 0), 4),
+            "s_mean": round(feature_dict.get('s_mean', 0), 4),
+            "s_std": round(feature_dict.get('s_std', 0), 4),
+            "v_mean": round(feature_dict.get('v_mean', 0), 4),
+            "v_std": round(feature_dict.get('v_std', 0), 4),
+            "edge_density": round(feature_dict.get('edge_density', 0), 4),
+            "entropy": round(feature_dict.get('entropy', 0), 4),
+            "contrast": round(feature_dict.get('contrast', 0), 4),
+            "dissimilarity": round(feature_dict.get('dissimilarity', 0), 4),
+            "homogeneity": round(feature_dict.get('homogeneity', 0), 4),
+            "asm": round(feature_dict.get('asm', 0), 4),
+            "royal_ratio": round(royal_ratio, 4)
+        }
+        
+        logger.info(f"Analysis completed: extracted {len(feature_dict)} features")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 @app.get("/")
 async def root():

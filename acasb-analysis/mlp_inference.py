@@ -1,6 +1,8 @@
 import os
 import sys
-sys.path.append('E:/Code/ACASB/acasb-analysis')
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
 from ancient_arch_extractor import AncientArchExtractor
 import numpy as np
@@ -15,8 +17,8 @@ class MLPInference:
         self.extractor = AncientArchExtractor()
         self.model = None
         self.scaler = None
-        self.model_path = "E:/Code/ACASB/acasb-analysis/models/mlp_model.pkl"
-        self.scaler_path = "E:/Code/ACASB/acasb-analysis/models/scaler.pkl"
+        self.model_path = os.path.join(current_dir, "models", "mlp_model.pkl")
+        self.scaler_path = os.path.join(current_dir, "models", "scaler.pkl")
     
     def load_model(self):
         try:

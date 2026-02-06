@@ -1,7 +1,9 @@
 import os
 import sys
 from typing import Tuple
-sys.path.append('E:/Code/ACASB/acasb-analysis')
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
 from ancient_arch_extractor import AncientArchExtractor
 import numpy as np
