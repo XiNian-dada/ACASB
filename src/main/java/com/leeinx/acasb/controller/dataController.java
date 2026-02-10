@@ -3,6 +3,7 @@ package com.leeinx.acasb.controller;
 import com.leeinx.acasb.dto.BatchUploadResult;
 import com.leeinx.acasb.dto.ImageFeatures;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
+import com.leeinx.acasb.dto.SortQueryRequest;
 import com.leeinx.acasb.entity.BuildingAnalysis;
 import com.leeinx.acasb.entity.BuildingType;
 import com.leeinx.acasb.service.BuildingAnalysisService;
@@ -273,6 +274,78 @@ public class dataController {
             }
             
             result.getItems().add(itemResult);
+        }
+        
+        return ResponseEntity.ok(result);
+    }
+    
+    @GetMapping("/list")
+    public ResponseEntity<Map<String, Object>> getAnalysesByField(
+            @RequestParam(required = false) String field,
+            @RequestParam(required = false) String order,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String prediction) {
+        Map<String, Object> result = new HashMap<>();
+        
+        try {
+            if (field == null || field.isEmpty()) {
+                field = "royalRatio";
+            }
+            
+            if (order == null || order.isEmpty()) {
+                order = "desc";
+            }
+            
+            List<BuildingAnalysis> analyses = buildingAnalysisService.getAnalysesByField(field, order, limit);
+            
+            List<Map<String, Object>> resultData = new ArrayList<>();
+            for (BuildingAnalysis analysis : analyses) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("id", analysis.getId());
+                item.put("imagePath", analysis.getImagePath());
+                item.put("ratioYellow", analysis.getRatioYellow());
+                item.put("ratioRed1", analysis.getRatioRed1());
+                item.put("ratioRed2", analysis.getRatioRed2());
+                item.put("ratioBlue", analysis.getRatioBlue());
+                item.put("ratioGreen", analysis.getRatioGreen());
+                item.put("ratioGrayWhite", analysis.getRatioGrayWhite());
+                item.put("ratioBlack", analysis.getRatioBlack());
+                item.put("hMean", analysis.getHMean());
+                item.put("hStd", analysis.getHStd());
+                item.put("sMean", analysis.getSMean());
+                item.put("sStd", analysis.getSStd());
+                item.put("vMean", analysis.getVMean());
+                item.put("vStd", analysis.getVStd());
+                item.put("edgeDensity", analysis.getEdgeDensity());
+                item.put("entropy", analysis.getEntropy());
+                item.put("contrast", analysis.getContrast());
+                item.put("dissimilarity", analysis.getDissimilarity());
+                item.put("homogeneity", analysis.getHomogeneity());
+                item.put("asm", analysis.getAsm());
+                item.put("royalRatio", analysis.getRoyalRatio());
+                item.put("createTime", analysis.getCreateTime());
+                item.put("updateTime", analysis.getUpdateTime());
+                
+                BuildingType buildingType = buildingTypeService.getTypeByAnalysisId(analysis.getId());
+                if (buildingType != null) {
+                    item.put("prediction", buildingType.getPrediction());
+                    item.put("confidence", buildingType.getConfidence());
+                } else {
+                    item.put("prediction", null);
+                    item.put("confidence", null);
+                }
+                
+                resultData.add(item);
+            }
+            
+            result.put("success", true);
+            result.put("data", resultData);
+            result.put("count", resultData.size());
+            result.put("message", "查询成功");
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "查询失败: " + e.getMessage());
+            e.printStackTrace();
         }
         
         return ResponseEntity.ok(result);

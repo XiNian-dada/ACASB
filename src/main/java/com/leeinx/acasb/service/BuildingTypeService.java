@@ -28,4 +28,9 @@ public class BuildingTypeService extends ServiceImpl<BuildingTypeMapper, Buildin
     public BuildingType getTypeById(Long id) {
         return getById(id);
     }
+    
+    public BuildingType getTypeByAnalysisId(Long analysisId) {
+        return getOne(new LambdaQueryWrapper<BuildingType>()
+                .eq(BuildingType::getAnalysisId, analysisId));
+    }
 }
