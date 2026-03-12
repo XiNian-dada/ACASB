@@ -14,6 +14,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         createBuildingAnalysisTable();
+        ensureBuildingAnalysisColumns();
         createBuildingTypeTable();
         System.out.println("数据库表初始化完成！");
     }
@@ -43,6 +44,11 @@ public class DatabaseInitializer implements CommandLineRunner {
                 homogeneity DECIMAL(10,4) COMMENT '同质性',
                 asm DECIMAL(10,4) COMMENT '角二阶矩',
                 royal_ratio DECIMAL(10,4) COMMENT '皇家比例',
+                ai_building_type VARCHAR(120) COMMENT 'AI 推断的建筑类型',
+                ai_style VARCHAR(255) COMMENT 'AI 推断的建筑风格',
+                ai_estimated_era VARCHAR(120) COMMENT 'AI 推断的建筑年代',
+                ai_summary VARCHAR(1000) COMMENT 'AI 解析摘要',
+                ai_analysis_json LONGTEXT COMMENT 'AI 结构化解析结果 JSON',
                 create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='建筑分析信息表'
@@ -54,6 +60,34 @@ public class DatabaseInitializer implements CommandLineRunner {
         } catch (Exception e) {
             System.err.println("创建 building_analysis 表失败: " + e.getMessage());
         }
+    }
+
+    private void ensureBuildingAnalysisColumns() {
+        addColumnIfMissing(
+                "building_analysis",
+                "ai_building_type",
+                "ALTER TABLE building_analysis ADD COLUMN ai_building_type VARCHAR(120) COMMENT 'AI 推断的建筑类型'"
+        );
+        addColumnIfMissing(
+                "building_analysis",
+                "ai_style",
+                "ALTER TABLE building_analysis ADD COLUMN ai_style VARCHAR(255) COMMENT 'AI 推断的建筑风格'"
+        );
+        addColumnIfMissing(
+                "building_analysis",
+                "ai_estimated_era",
+                "ALTER TABLE building_analysis ADD COLUMN ai_estimated_era VARCHAR(120) COMMENT 'AI 推断的建筑年代'"
+        );
+        addColumnIfMissing(
+                "building_analysis",
+                "ai_summary",
+                "ALTER TABLE building_analysis ADD COLUMN ai_summary VARCHAR(1000) COMMENT 'AI 解析摘要'"
+        );
+        addColumnIfMissing(
+                "building_analysis",
+                "ai_analysis_json",
+                "ALTER TABLE building_analysis ADD COLUMN ai_analysis_json LONGTEXT COMMENT 'AI 结构化解析结果 JSON'"
+        );
     }
 
     private void createBuildingTypeTable() {
@@ -75,6 +109,30 @@ public class DatabaseInitializer implements CommandLineRunner {
             System.out.println("building_type 表创建成功");
         } catch (Exception e) {
             System.err.println("创建 building_type 表失败: " + e.getMessage());
+        }
+    }
+
+    private void addColumnIfMissing(String tableName, String columnName, String alterSql) {
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    """
+                    SELECT COUNT(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = DATABASE()
+                      AND table_name = ?
+                      AND column_name = ?
+                    """,
+                    Integer.class,
+                    tableName,
+                    columnName
+            );
+
+            if (count != null && count == 0) {
+                jdbcTemplate.execute(alterSql);
+                System.out.println(tableName + " 表新增字段成功: " + columnName);
+            }
+        } catch (Exception e) {
+            System.err.println("检查或新增字段失败 " + tableName + "." + columnName + ": " + e.getMessage());
         }
     }
 }

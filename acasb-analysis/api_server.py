@@ -1,9 +1,8 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 import logging
 import os
-import tempfile
 from typing import Dict, Optional
 from ancient_arch_extractor import AncientArchExtractor
 from mlp_inference import MLPInference
@@ -304,6 +303,7 @@ async def root():
             "GET /health": "Health check",
             "POST /train": "Train MLP model",
             "POST /predict": "Predict building type",
+            "POST /analyze": "Extract handcrafted image features",
             "GET /": "API information"
         }
     }

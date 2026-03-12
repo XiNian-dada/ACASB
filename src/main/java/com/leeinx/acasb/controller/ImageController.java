@@ -1,39 +1,44 @@
 package com.leeinx.acasb.controller;
 
 import com.leeinx.acasb.PredictionRequest;
+import com.leeinx.acasb.dto.AnalyzeRequest;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
 import com.leeinx.acasb.dto.ImageFeatures;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.leeinx.acasb.service.OpenAiCompatibleBuildingAnalysisService;
+import com.leeinx.acasb.service.PythonAnalysisClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api")
 @CrossOrigin(origins = "*")
 public class ImageController {
+    private final PythonAnalysisClient pythonAnalysisClient;
+    private final OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService;
 
-    @Autowired
-    private RestTemplate restTemplate;
+    public ImageController(
+            PythonAnalysisClient pythonAnalysisClient,
+            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService) {
+        this.pythonAnalysisClient = pythonAnalysisClient;
+        this.openAiCompatibleBuildingAnalysisService = openAiCompatibleBuildingAnalysisService;
+    }
 
-    @Value("${app.temp-folder}")
+    @Value("${app.temp-folder:./temp}")
     private String tempFolder;
 
     @PostMapping("/predict")
     public ResponseEntity<ImageAnalysisResult> predict(@RequestBody PredictionRequest request) {
         try {
-            String pythonUrl = "http://localhost:5000/predict";
-            ImageAnalysisResult result = restTemplate.postForObject(pythonUrl, request, ImageAnalysisResult.class);
+            ImageAnalysisResult result = pythonAnalysisClient.predict(request.getImage_path());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             ImageAnalysisResult errorResult = new ImageAnalysisResult();
@@ -43,89 +48,35 @@ public class ImageController {
         }
     }
 
-    @PostMapping("/analyze")
-    public ResponseEntity<ImageFeatures> analyzeImage(
+    @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ImageFeatures> analyzeImageForm(
             @RequestParam(value = "file", required = false) MultipartFile file,
-            @RequestParam(value = "image_path", required = false) String imagePath) {
-        ImageFeatures result = new ImageFeatures();
-        
+            @RequestParam(value = "image_path", required = false) String imagePath,
+            @RequestParam(value = "enable_ai", required = false) Boolean enableAi) {
         try {
             if (file != null && !file.isEmpty()) {
-                String originalFilename = file.getOriginalFilename();
-                String fileExtension = originalFilename.substring(originalFilename.lastIndexOf("."));
-                String uniqueFilename = UUID.randomUUID().toString() + fileExtension;
-                
-                Path tempDir = Paths.get(tempFolder).toAbsolutePath();
-                if (!Files.exists(tempDir)) {
-                    Files.createDirectories(tempDir);
-                }
-                
-                Path filePath = tempDir.resolve(uniqueFilename);
-                file.transferTo(filePath.toFile());
-                
-                String absolutePath = filePath.toAbsolutePath().toString();
-                
-                Map<String, String> request = new HashMap<>();
-                request.put("image_path", absolutePath);
-                
-                String pythonUrl = "http://localhost:5000/analyze";
-                System.out.println("调用 Python 服务: " + pythonUrl);
-                System.out.println("请求参数: " + request);
-                System.out.println("文件是否存在: " + Files.exists(filePath));
-                System.out.println("文件绝对路径: " + absolutePath);
-                
-                ImageFeatures pythonResult = restTemplate.postForObject(pythonUrl, request, ImageFeatures.class);
-                
-                System.out.println("Python 服务返回: " + pythonResult);
-                
-                if (pythonResult != null) {
-                    result = pythonResult;
-                    result.setSuccess(true);
-                    result.setMessage("图像分析完成");
-                } else {
-                    result.setSuccess(false);
-                    result.setMessage("Python服务返回空结果");
-                }
-                
-                Files.deleteIfExists(filePath);
-                
-            } else if (imagePath != null && !imagePath.isEmpty()) {
-                Map<String, String> request = new HashMap<>();
-                request.put("image_path", imagePath);
-                
-                String pythonUrl = "http://localhost:5000/analyze";
-                System.out.println("调用 Python 服务: " + pythonUrl);
-                System.out.println("请求参数: " + request);
-                
-                ImageFeatures pythonResult = restTemplate.postForObject(pythonUrl, request, ImageFeatures.class);
-                
-                System.out.println("Python 服务返回: " + pythonResult);
-                
-                if (pythonResult != null) {
-                    result = pythonResult;
-                    result.setSuccess(true);
-                    result.setMessage("图像分析完成");
-                } else {
-                    result.setSuccess(false);
-                    result.setMessage("Python服务返回空结果");
-                }
-                
-            } else {
-                result.setSuccess(false);
-                result.setMessage("请提供文件或图片路径");
+                return ResponseEntity.ok(analyzeUploadedFile(file, enableAi));
             }
-            
-        } catch (IOException e) {
-            result.setSuccess(false);
-            result.setMessage("文件处理失败: " + e.getMessage());
-            e.printStackTrace();
+
+            return ResponseEntity.ok(analyzeByPath(imagePath, enableAi));
         } catch (Exception e) {
+            ImageFeatures result = new ImageFeatures();
             result.setSuccess(false);
             result.setMessage("分析失败: " + e.getMessage());
-            e.printStackTrace();
+            return ResponseEntity.ok(result);
         }
-        
-        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping(value = "/analyze", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ImageFeatures> analyzeImageJson(@RequestBody AnalyzeRequest request) {
+        try {
+            return ResponseEntity.ok(analyzeByPath(request.getImagePath(), request.getEnableAi()));
+        } catch (Exception e) {
+            ImageFeatures result = new ImageFeatures();
+            result.setSuccess(false);
+            result.setMessage("分析失败: " + e.getMessage());
+            return ResponseEntity.ok(result);
+        }
     }
 
     @GetMapping("/health")
@@ -136,5 +87,58 @@ public class ImageController {
     @GetMapping("/test")
     public String test() {
         return "Image API is working!";
+    }
+
+    private ImageFeatures analyzeUploadedFile(MultipartFile file, Boolean enableAi) throws IOException {
+        Path tempDir = Paths.get(tempFolder).toAbsolutePath().normalize();
+        if (!Files.exists(tempDir)) {
+            Files.createDirectories(tempDir);
+        }
+
+        String uniqueFilename = UUID.randomUUID() + resolveFileExtension(file.getOriginalFilename());
+        Path filePath = tempDir.resolve(uniqueFilename);
+
+        try {
+            file.transferTo(filePath.toFile());
+            return analyzeByPath(filePath.toAbsolutePath().toString(), enableAi);
+        } finally {
+            Files.deleteIfExists(filePath);
+        }
+    }
+
+    private ImageFeatures analyzeByPath(String imagePath, Boolean enableAi) {
+        ImageFeatures result = new ImageFeatures();
+        if (!StringUtils.hasText(imagePath)) {
+            result.setSuccess(false);
+            result.setMessage("请提供文件或图片路径");
+            return result;
+        }
+
+        ImageFeatures pythonResult = pythonAnalysisClient.analyze(imagePath);
+        if (pythonResult == null) {
+            result.setSuccess(false);
+            result.setMessage("Python服务返回空结果");
+            return result;
+        }
+
+        result = pythonResult;
+        if (!StringUtils.hasText(result.getMessage())) {
+            result.setMessage("图像分析完成");
+        }
+
+        if (result.isSuccess() && shouldEnableAi(enableAi)) {
+            result.setAiAnalysis(openAiCompatibleBuildingAnalysisService.analyze(Paths.get(imagePath)));
+        }
+
+        return result;
+    }
+
+    private boolean shouldEnableAi(Boolean enableAi) {
+        return enableAi != null ? enableAi : openAiCompatibleBuildingAnalysisService.isEnabledByDefault();
+    }
+
+    private String resolveFileExtension(String originalFilename) {
+        String extension = StringUtils.getFilenameExtension(originalFilename);
+        return StringUtils.hasText(extension) ? "." + extension : ".jpg";
     }
 }

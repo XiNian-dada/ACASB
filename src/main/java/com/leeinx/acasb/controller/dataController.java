@@ -1,18 +1,21 @@
 package com.leeinx.acasb.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leeinx.acasb.dto.AiBuildingAnalysis;
 import com.leeinx.acasb.dto.BatchUploadResult;
-import com.leeinx.acasb.dto.ImageFeatures;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
-import com.leeinx.acasb.dto.SortQueryRequest;
+import com.leeinx.acasb.dto.ImageFeatures;
 import com.leeinx.acasb.entity.BuildingAnalysis;
 import com.leeinx.acasb.entity.BuildingType;
 import com.leeinx.acasb.service.BuildingAnalysisService;
 import com.leeinx.acasb.service.BuildingTypeService;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.leeinx.acasb.service.OpenAiCompatibleBuildingAnalysisService;
+import com.leeinx.acasb.service.PythonAnalysisClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -29,113 +32,61 @@ import java.util.UUID;
 @RequestMapping("/data")
 @CrossOrigin(origins = "*")
 public class dataController {
+    private final PythonAnalysisClient pythonAnalysisClient;
+    private final BuildingAnalysisService buildingAnalysisService;
+    private final BuildingTypeService buildingTypeService;
+    private final OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService;
+    private final ObjectMapper objectMapper;
 
-    @Autowired
-    private RestTemplate restTemplate;
+    public dataController(
+            PythonAnalysisClient pythonAnalysisClient,
+            BuildingAnalysisService buildingAnalysisService,
+            BuildingTypeService buildingTypeService,
+            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService,
+            ObjectMapper objectMapper) {
+        this.pythonAnalysisClient = pythonAnalysisClient;
+        this.buildingAnalysisService = buildingAnalysisService;
+        this.buildingTypeService = buildingTypeService;
+        this.openAiCompatibleBuildingAnalysisService = openAiCompatibleBuildingAnalysisService;
+        this.objectMapper = objectMapper;
+    }
 
-    @Autowired
-    private BuildingAnalysisService buildingAnalysisService;
-
-    @Autowired
-    private BuildingTypeService buildingTypeService;
-
-    @Value("${app.temp-folder:./temp}")
-    private String tempFolder;
+    @Value("${app.storage-folder:./uploads}")
+    private String storageFolder;
 
     @PostMapping("/add")
-    public ResponseEntity<Map<String, Object>> addData(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<Map<String, Object>> addData(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "enable_ai", required = false) Boolean enableAi) {
         Map<String, Object> result = new HashMap<>();
-        
+
         try {
-            String originalFilename = file.getOriginalFilename();
-            String fileExtension = originalFilename.substring(originalFilename.lastIndexOf("."));
-            String uniqueFilename = UUID.randomUUID().toString() + fileExtension;
-            
-            Path tempDir = Paths.get(tempFolder).toAbsolutePath().normalize();
-            if (!Files.exists(tempDir)) {
-                Files.createDirectories(tempDir);
-            }
-            
-            Path filePath = tempDir.resolve(uniqueFilename);
-            file.transferTo(filePath.toFile());
-            
-            Map<String, String> request = new HashMap<>();
-            request.put("image_path", filePath.toAbsolutePath().toString());
-            
-            String pythonUrl = "http://localhost:5000/analyze";
-            ImageFeatures imageFeatures = restTemplate.postForObject(pythonUrl, request, ImageFeatures.class);
-            
-            if (imageFeatures != null && imageFeatures.isSuccess()) {
-                BuildingAnalysis analysis = new BuildingAnalysis();
-                analysis.setImagePath(filePath.toAbsolutePath().toString());
-                analysis.setRatioYellow(imageFeatures.getRatioYellow());
-                analysis.setRatioRed1(imageFeatures.getRatioRed1());
-                analysis.setRatioRed2(imageFeatures.getRatioRed2());
-                analysis.setRatioBlue(imageFeatures.getRatioBlue());
-                analysis.setRatioGreen(imageFeatures.getRatioGreen());
-                analysis.setRatioGrayWhite(imageFeatures.getRatioGrayWhite());
-                analysis.setRatioBlack(imageFeatures.getRatioBlack());
-                analysis.setHMean(imageFeatures.getHMean());
-                analysis.setHStd(imageFeatures.getHStd());
-                analysis.setSMean(imageFeatures.getSMean());
-                analysis.setSStd(imageFeatures.getSStd());
-                analysis.setVMean(imageFeatures.getVMean());
-                analysis.setVStd(imageFeatures.getVStd());
-                analysis.setEdgeDensity(imageFeatures.getEdgeDensity());
-                analysis.setEntropy(imageFeatures.getEntropy());
-                analysis.setContrast(imageFeatures.getContrast());
-                analysis.setDissimilarity(imageFeatures.getDissimilarity());
-                analysis.setHomogeneity(imageFeatures.getHomogeneity());
-                analysis.setAsm(imageFeatures.getAsm());
-                analysis.setRoyalRatio(imageFeatures.getRoyalRatio());
-                
-                BuildingAnalysis savedAnalysis = buildingAnalysisService.saveAnalysis(analysis);
-                
-                pythonUrl = "http://localhost:5000/predict";
-                ImageAnalysisResult predictionResult = restTemplate.postForObject(pythonUrl, request, ImageAnalysisResult.class);
-                
-                if (predictionResult != null && predictionResult.isSuccess()) {
-                    BuildingType buildingType = new BuildingType();
-                    buildingType.setImagePath(filePath.toAbsolutePath().toString());
-                    buildingType.setPrediction(predictionResult.getPrediction());
-                    buildingType.setConfidence(predictionResult.getConfidence());
-                    buildingType.setAnalysisId(savedAnalysis.getId());
-                    
-                    buildingTypeService.saveType(buildingType);
-                    
-                    result.put("success", true);
-                    result.put("message", "数据添加成功");
-                    result.put("analysisId", savedAnalysis.getId());
-                    result.put("typeId", buildingType.getId());
-                } else {
-                    result.put("success", false);
-                    result.put("message", "预测失败");
-                }
-            } else {
-                result.put("success", false);
-                result.put("message", "图像分析失败");
-            }
-            
-            Files.deleteIfExists(filePath);
-            
-        } catch (IOException e) {
+            Path storedPath = storeUpload(file);
+            ProcessedImageData processedImageData = processStoredImage(storedPath, enableAi);
+
+            result.put("success", true);
+            result.put("message", "数据添加成功");
+            result.put("analysisId", processedImageData.savedAnalysis().getId());
+            result.put("typeId", processedImageData.savedType() != null ? processedImageData.savedType().getId() : null);
+            result.put("storedImagePath", storedPath.toString());
+            result.put("aiAnalysis", processedImageData.imageFeatures().getAiAnalysis());
+        } catch (Exception e) {
             result.put("success", false);
-            result.put("message", "文件处理失败: " + e.getMessage());
-            e.printStackTrace();
+            result.put("message", "处理失败: " + e.getMessage());
         }
-        
+
         return ResponseEntity.ok(result);
     }
 
     @GetMapping("/analysis/{id}")
     public ResponseEntity<Map<String, Object>> getAnalysisById(@PathVariable Long id) {
         Map<String, Object> result = new HashMap<>();
-        
+
         try {
             BuildingAnalysis analysis = buildingAnalysisService.getAnalysisById(id);
             if (analysis != null) {
                 result.put("success", true);
-                result.put("data", analysis);
+                result.put("data", buildAnalysisResponseItem(analysis));
             } else {
                 result.put("success", false);
                 result.put("message", "未找到编号为 " + id + " 的分析信息");
@@ -143,16 +94,15 @@ public class dataController {
         } catch (Exception e) {
             result.put("success", false);
             result.put("message", "查询失败: " + e.getMessage());
-            e.printStackTrace();
         }
-        
+
         return ResponseEntity.ok(result);
     }
 
     @GetMapping("/type/{id}")
     public ResponseEntity<Map<String, Object>> getTypeById(@PathVariable Long id) {
         Map<String, Object> result = new HashMap<>();
-        
+
         try {
             BuildingType buildingType = buildingTypeService.getTypeById(id);
             if (buildingType != null) {
@@ -165,120 +115,51 @@ public class dataController {
         } catch (Exception e) {
             result.put("success", false);
             result.put("message", "查询失败: " + e.getMessage());
-            e.printStackTrace();
         }
-        
+
         return ResponseEntity.ok(result);
     }
 
     @PostMapping("/batch")
-    public ResponseEntity<BatchUploadResult> batchUpload(@RequestParam("files") MultipartFile[] files) {
+    public ResponseEntity<BatchUploadResult> batchUpload(
+            @RequestParam("files") MultipartFile[] files,
+            @RequestParam(value = "enable_ai", required = false) Boolean enableAi) {
         BatchUploadResult result = new BatchUploadResult();
-        result.setTotalCount(files.length);
+        int totalCount = files == null ? 0 : files.length;
+        result.setTotalCount(totalCount);
         result.setSuccessCount(0);
         result.setFailureCount(0);
         result.setItems(new ArrayList<>());
-        
-        if (files == null || files.length == 0) {
+
+        if (totalCount == 0) {
             return ResponseEntity.ok(result);
         }
-        
-        Path tempDir = Paths.get(tempFolder).toAbsolutePath().normalize();
-        if (!Files.exists(tempDir)) {
-            try {
-                Files.createDirectories(tempDir);
-            } catch (IOException e) {
-                result.setFailureCount(files.length);
-                return ResponseEntity.ok(result);
-            }
-        }
-        
+
         for (MultipartFile file : files) {
             BatchUploadResult.UploadItemResult itemResult = new BatchUploadResult.UploadItemResult();
             itemResult.setFileName(file.getOriginalFilename());
-            
+
             try {
-                String originalFilename = file.getOriginalFilename();
-                String fileExtension = originalFilename.substring(originalFilename.lastIndexOf("."));
-                String uniqueFilename = UUID.randomUUID().toString() + fileExtension;
-                
-                Path filePath = tempDir.resolve(uniqueFilename);
-                file.transferTo(filePath.toFile());
-                
-                Map<String, String> request = new HashMap<>();
-                request.put("image_path", filePath.toAbsolutePath().toString());
-                
-                String pythonUrl = "http://localhost:5000/analyze";
-                ImageFeatures imageFeatures = restTemplate.postForObject(pythonUrl, request, ImageFeatures.class);
-                
-                if (imageFeatures != null && imageFeatures.isSuccess()) {
-                    BuildingAnalysis analysis = new BuildingAnalysis();
-                    analysis.setImagePath(filePath.toAbsolutePath().toString());
-                    analysis.setRatioYellow(imageFeatures.getRatioYellow());
-                    analysis.setRatioRed1(imageFeatures.getRatioRed1());
-                    analysis.setRatioRed2(imageFeatures.getRatioRed2());
-                    analysis.setRatioBlue(imageFeatures.getRatioBlue());
-                    analysis.setRatioGreen(imageFeatures.getRatioGreen());
-                    analysis.setRatioGrayWhite(imageFeatures.getRatioGrayWhite());
-                    analysis.setRatioBlack(imageFeatures.getRatioBlack());
-                    analysis.setHMean(imageFeatures.getHMean());
-                    analysis.setHStd(imageFeatures.getHStd());
-                    analysis.setSMean(imageFeatures.getSMean());
-                    analysis.setSStd(imageFeatures.getSStd());
-                    analysis.setVMean(imageFeatures.getVMean());
-                    analysis.setVStd(imageFeatures.getVStd());
-                    analysis.setEdgeDensity(imageFeatures.getEdgeDensity());
-                    analysis.setEntropy(imageFeatures.getEntropy());
-                    analysis.setContrast(imageFeatures.getContrast());
-                    analysis.setDissimilarity(imageFeatures.getDissimilarity());
-                    analysis.setHomogeneity(imageFeatures.getHomogeneity());
-                    analysis.setAsm(imageFeatures.getAsm());
-                    analysis.setRoyalRatio(imageFeatures.getRoyalRatio());
-                    
-                    BuildingAnalysis savedAnalysis = buildingAnalysisService.saveAnalysis(analysis);
-                    
-                    pythonUrl = "http://localhost:5000/predict";
-                    ImageAnalysisResult predictionResult = restTemplate.postForObject(pythonUrl, request, ImageAnalysisResult.class);
-                    
-                    if (predictionResult != null && predictionResult.isSuccess()) {
-                        BuildingType buildingType = new BuildingType();
-                        buildingType.setImagePath(filePath.toAbsolutePath().toString());
-                        buildingType.setPrediction(predictionResult.getPrediction());
-                        buildingType.setConfidence(predictionResult.getConfidence());
-                        buildingType.setAnalysisId(savedAnalysis.getId());
-                        
-                        buildingTypeService.saveType(buildingType);
-                        
-                        itemResult.setAnalysisId(savedAnalysis.getId());
-                        itemResult.setTypeId(buildingType.getId());
-                        itemResult.setSuccess(true);
-                        itemResult.setMessage("上传成功");
-                        result.setSuccessCount(result.getSuccessCount() + 1);
-                    } else {
-                        itemResult.setSuccess(false);
-                        itemResult.setMessage("预测失败");
-                        result.setFailureCount(result.getFailureCount() + 1);
-                    }
-                } else {
-                    itemResult.setSuccess(false);
-                    itemResult.setMessage("图像分析失败");
-                    result.setFailureCount(result.getFailureCount() + 1);
-                }
-                
-                Files.deleteIfExists(filePath);
-                
+                Path storedPath = storeUpload(file);
+                ProcessedImageData processedImageData = processStoredImage(storedPath, enableAi);
+
+                itemResult.setAnalysisId(processedImageData.savedAnalysis().getId());
+                itemResult.setTypeId(processedImageData.savedType() != null ? processedImageData.savedType().getId() : null);
+                itemResult.setSuccess(true);
+                itemResult.setMessage("上传成功");
+                result.setSuccessCount(result.getSuccessCount() + 1);
             } catch (Exception e) {
                 itemResult.setSuccess(false);
                 itemResult.setMessage("处理失败: " + e.getMessage());
                 result.setFailureCount(result.getFailureCount() + 1);
             }
-            
+
             result.getItems().add(itemResult);
         }
-        
+
         return ResponseEntity.ok(result);
     }
-    
+
     @GetMapping("/list")
     public ResponseEntity<Map<String, Object>> getAnalysesByField(
             @RequestParam(required = false) String field,
@@ -286,58 +167,26 @@ public class dataController {
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false) String prediction) {
         Map<String, Object> result = new HashMap<>();
-        
+
         try {
-            if (field == null || field.isEmpty()) {
-                field = "royalRatio";
-            }
-            
-            if (order == null || order.isEmpty()) {
-                order = "desc";
-            }
-            
-            List<BuildingAnalysis> analyses = buildingAnalysisService.getAnalysesByField(field, order, limit);
-            
+            int normalizedLimit = (limit == null || limit <= 0) ? 10 : Math.min(limit, 200);
+            int fetchLimit = StringUtils.hasText(prediction) ? 200 : normalizedLimit;
+            List<BuildingAnalysis> analyses = buildingAnalysisService.getAnalysesByField(field, order, fetchLimit);
+
             List<Map<String, Object>> resultData = new ArrayList<>();
             for (BuildingAnalysis analysis : analyses) {
-                Map<String, Object> item = new HashMap<>();
-                item.put("id", analysis.getId());
-                item.put("imagePath", analysis.getImagePath());
-                item.put("ratioYellow", analysis.getRatioYellow());
-                item.put("ratioRed1", analysis.getRatioRed1());
-                item.put("ratioRed2", analysis.getRatioRed2());
-                item.put("ratioBlue", analysis.getRatioBlue());
-                item.put("ratioGreen", analysis.getRatioGreen());
-                item.put("ratioGrayWhite", analysis.getRatioGrayWhite());
-                item.put("ratioBlack", analysis.getRatioBlack());
-                item.put("hMean", analysis.getHMean());
-                item.put("hStd", analysis.getHStd());
-                item.put("sMean", analysis.getSMean());
-                item.put("sStd", analysis.getSStd());
-                item.put("vMean", analysis.getVMean());
-                item.put("vStd", analysis.getVStd());
-                item.put("edgeDensity", analysis.getEdgeDensity());
-                item.put("entropy", analysis.getEntropy());
-                item.put("contrast", analysis.getContrast());
-                item.put("dissimilarity", analysis.getDissimilarity());
-                item.put("homogeneity", analysis.getHomogeneity());
-                item.put("asm", analysis.getAsm());
-                item.put("royalRatio", analysis.getRoyalRatio());
-                item.put("createTime", analysis.getCreateTime());
-                item.put("updateTime", analysis.getUpdateTime());
-                
                 BuildingType buildingType = buildingTypeService.getTypeByAnalysisId(analysis.getId());
-                if (buildingType != null) {
-                    item.put("prediction", buildingType.getPrediction());
-                    item.put("confidence", buildingType.getConfidence());
-                } else {
-                    item.put("prediction", null);
-                    item.put("confidence", null);
+                if (StringUtils.hasText(prediction)
+                        && (buildingType == null || !prediction.equalsIgnoreCase(buildingType.getPrediction()))) {
+                    continue;
                 }
-                
-                resultData.add(item);
+
+                resultData.add(buildAnalysisResponseItem(analysis, buildingType));
+                if (resultData.size() >= normalizedLimit) {
+                    break;
+                }
             }
-            
+
             result.put("success", true);
             result.put("data", resultData);
             result.put("count", resultData.size());
@@ -345,9 +194,167 @@ public class dataController {
         } catch (Exception e) {
             result.put("success", false);
             result.put("message", "查询失败: " + e.getMessage());
-            e.printStackTrace();
         }
-        
+
         return ResponseEntity.ok(result);
+    }
+
+    private ProcessedImageData processStoredImage(Path storedPath, Boolean enableAi) {
+        ImageFeatures imageFeatures = pythonAnalysisClient.analyze(storedPath.toString());
+        if (imageFeatures == null || !imageFeatures.isSuccess()) {
+            throw new IllegalStateException("图像分析失败");
+        }
+
+        if (shouldEnableAi(enableAi)) {
+            imageFeatures.setAiAnalysis(openAiCompatibleBuildingAnalysisService.analyze(storedPath));
+        }
+
+        BuildingAnalysis analysis = buildAnalysisEntity(storedPath.toString(), imageFeatures);
+        BuildingAnalysis savedAnalysis = buildingAnalysisService.saveAnalysis(analysis);
+
+        ImageAnalysisResult predictionResult = pythonAnalysisClient.predict(storedPath.toString());
+        BuildingType savedType = null;
+        if (predictionResult != null && predictionResult.isSuccess()) {
+            BuildingType buildingType = new BuildingType();
+            buildingType.setImagePath(storedPath.toString());
+            buildingType.setPrediction(predictionResult.getPrediction());
+            buildingType.setConfidence(predictionResult.getConfidence());
+            buildingType.setAnalysisId(savedAnalysis.getId());
+            savedType = buildingTypeService.saveType(buildingType);
+        }
+
+        return new ProcessedImageData(imageFeatures, savedAnalysis, savedType);
+    }
+
+    private BuildingAnalysis buildAnalysisEntity(String imagePath, ImageFeatures imageFeatures) {
+        BuildingAnalysis analysis = new BuildingAnalysis();
+        analysis.setImagePath(imagePath);
+        analysis.setRatioYellow(imageFeatures.getRatioYellow());
+        analysis.setRatioRed1(imageFeatures.getRatioRed1());
+        analysis.setRatioRed2(imageFeatures.getRatioRed2());
+        analysis.setRatioBlue(imageFeatures.getRatioBlue());
+        analysis.setRatioGreen(imageFeatures.getRatioGreen());
+        analysis.setRatioGrayWhite(imageFeatures.getRatioGrayWhite());
+        analysis.setRatioBlack(imageFeatures.getRatioBlack());
+        analysis.setHMean(imageFeatures.getHMean());
+        analysis.setHStd(imageFeatures.getHStd());
+        analysis.setSMean(imageFeatures.getSMean());
+        analysis.setSStd(imageFeatures.getSStd());
+        analysis.setVMean(imageFeatures.getVMean());
+        analysis.setVStd(imageFeatures.getVStd());
+        analysis.setEdgeDensity(imageFeatures.getEdgeDensity());
+        analysis.setEntropy(imageFeatures.getEntropy());
+        analysis.setContrast(imageFeatures.getContrast());
+        analysis.setDissimilarity(imageFeatures.getDissimilarity());
+        analysis.setHomogeneity(imageFeatures.getHomogeneity());
+        analysis.setAsm(imageFeatures.getAsm());
+        analysis.setRoyalRatio(imageFeatures.getRoyalRatio());
+
+        AiBuildingAnalysis aiAnalysis = imageFeatures.getAiAnalysis();
+        if (aiAnalysis != null) {
+            analysis.setAiBuildingType(aiAnalysis.getBuildingType());
+            analysis.setAiStyle(aiAnalysis.getStyle());
+            analysis.setAiEstimatedEra(aiAnalysis.getEstimatedEra());
+            analysis.setAiSummary(aiAnalysis.getSummary());
+            analysis.setAiAnalysisJson(serializeAiAnalysis(aiAnalysis));
+        }
+
+        return analysis;
+    }
+
+    private Path storeUpload(MultipartFile file) throws IOException {
+        String originalFilename = file.getOriginalFilename();
+        String extension = resolveFileExtension(originalFilename);
+
+        Path storageDir = Paths.get(storageFolder).toAbsolutePath().normalize();
+        if (!Files.exists(storageDir)) {
+            Files.createDirectories(storageDir);
+        }
+
+        Path storedPath = storageDir.resolve(UUID.randomUUID() + extension);
+        file.transferTo(storedPath.toFile());
+        return storedPath;
+    }
+
+    private String resolveFileExtension(String originalFilename) {
+        String extension = StringUtils.getFilenameExtension(originalFilename);
+        return StringUtils.hasText(extension) ? "." + extension : ".jpg";
+    }
+
+    private boolean shouldEnableAi(Boolean enableAi) {
+        return enableAi != null ? enableAi : openAiCompatibleBuildingAnalysisService.isEnabledByDefault();
+    }
+
+    private String serializeAiAnalysis(AiBuildingAnalysis aiAnalysis) {
+        try {
+            return objectMapper.writeValueAsString(aiAnalysis);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+
+    private AiBuildingAnalysis deserializeAiAnalysis(String json) {
+        if (!StringUtils.hasText(json)) {
+            return null;
+        }
+
+        try {
+            return objectMapper.readValue(json, AiBuildingAnalysis.class);
+        } catch (JsonProcessingException e) {
+            return AiBuildingAnalysis.failed("stored-json", null, "AI 解析结果反序列化失败: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> buildAnalysisResponseItem(BuildingAnalysis analysis) {
+        return buildAnalysisResponseItem(analysis, buildingTypeService.getTypeByAnalysisId(analysis.getId()));
+    }
+
+    private Map<String, Object> buildAnalysisResponseItem(BuildingAnalysis analysis, BuildingType buildingType) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("id", analysis.getId());
+        item.put("imagePath", analysis.getImagePath());
+        item.put("ratioYellow", analysis.getRatioYellow());
+        item.put("ratioRed1", analysis.getRatioRed1());
+        item.put("ratioRed2", analysis.getRatioRed2());
+        item.put("ratioBlue", analysis.getRatioBlue());
+        item.put("ratioGreen", analysis.getRatioGreen());
+        item.put("ratioGrayWhite", analysis.getRatioGrayWhite());
+        item.put("ratioBlack", analysis.getRatioBlack());
+        item.put("hMean", analysis.getHMean());
+        item.put("hStd", analysis.getHStd());
+        item.put("sMean", analysis.getSMean());
+        item.put("sStd", analysis.getSStd());
+        item.put("vMean", analysis.getVMean());
+        item.put("vStd", analysis.getVStd());
+        item.put("edgeDensity", analysis.getEdgeDensity());
+        item.put("entropy", analysis.getEntropy());
+        item.put("contrast", analysis.getContrast());
+        item.put("dissimilarity", analysis.getDissimilarity());
+        item.put("homogeneity", analysis.getHomogeneity());
+        item.put("asm", analysis.getAsm());
+        item.put("royalRatio", analysis.getRoyalRatio());
+        item.put("aiBuildingType", analysis.getAiBuildingType());
+        item.put("aiStyle", analysis.getAiStyle());
+        item.put("aiEstimatedEra", analysis.getAiEstimatedEra());
+        item.put("aiSummary", analysis.getAiSummary());
+        item.put("aiAnalysis", deserializeAiAnalysis(analysis.getAiAnalysisJson()));
+        item.put("createTime", analysis.getCreateTime());
+        item.put("updateTime", analysis.getUpdateTime());
+
+        if (buildingType != null) {
+            item.put("prediction", buildingType.getPrediction());
+            item.put("confidence", buildingType.getConfidence());
+        } else {
+            item.put("prediction", null);
+            item.put("confidence", null);
+        }
+
+        return item;
+    }
+
+    private record ProcessedImageData(
+            ImageFeatures imageFeatures,
+            BuildingAnalysis savedAnalysis,
+            BuildingType savedType) {
     }
 }

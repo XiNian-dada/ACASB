@@ -10,6 +10,9 @@ public class ImageFeatures {
     
     private String prediction;
     private Double confidence;
+
+    @JsonProperty("ai_analysis")
+    private AiBuildingAnalysis aiAnalysis;
     
     @JsonProperty("ratio_yellow")
     private double ratioYellow;
