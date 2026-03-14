@@ -65,16 +65,22 @@ def create_readme(temp_dir):
 ## 使用说明
 
 ### 1. 配置数据库
-编辑 config.properties 文件，修改数据库配置：
-- db.host: 数据库地址
-- db.port: 数据库端口
-- db.name: 数据库名称
-- db.username: 数据库用户名
-- db.password: 数据库密码
+	编辑 config.properties 文件，修改数据库配置：
+	- db.host: 数据库地址
+	- db.port: 数据库端口
+	- db.name: 数据库名称
+	- db.username: 数据库用户名
+	- db.password: 数据库密码
+	- ai.analysis.enabled: 是否启用云端 AI 解析
+	- ai.analysis.api-interface: responses / chat / auto
+	- ai.analysis.responses-path: OpenAI Responses 接口路径
+	- ai.analysis.chat-completions-path: Chat Completions 接口路径
+	- ai.analysis.api-key: AI 接口密钥
+	- ai.analysis.model: AI 模型名称
 
-启动脚本说明：
-- start_java.* 会自动读取 config.properties 并传给 Spring Boot
-- start_python.* 会自动读取 python.host / python.port
+	启动脚本说明：
+	- start_java.* 会自动读取 config.properties 并传给 Spring Boot
+	- start_python.* 会自动读取 python.host / python.port
 
 ### 2. 启动后端服务
 - Windows: 双击 start_java.bat

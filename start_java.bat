@@ -16,6 +16,8 @@ set "STORAGE_FOLDER=./uploads"
 set "DATASET_STORAGE_FOLDER=./dataset-storage"
 set "AI_ENABLED=false"
 set "AI_BASE_URL=https://api.openai.com"
+set "AI_INTERFACE=responses"
+set "AI_RESPONSES_PATH=/v1/responses"
 set "AI_CHAT_PATH=/v1/chat/completions"
 set "AI_API_KEY="
 set "AI_MODEL=gpt-4.1-mini"
@@ -34,6 +36,8 @@ if exist "%CONFIG_FILE%" (
     if /I "%%A"=="dataset.storage.folder" set "DATASET_STORAGE_FOLDER=%%B"
     if /I "%%A"=="ai.analysis.enabled" set "AI_ENABLED=%%B"
     if /I "%%A"=="ai.analysis.base-url" set "AI_BASE_URL=%%B"
+    if /I "%%A"=="ai.analysis.api-interface" set "AI_INTERFACE=%%B"
+    if /I "%%A"=="ai.analysis.responses-path" set "AI_RESPONSES_PATH=%%B"
     if /I "%%A"=="ai.analysis.chat-completions-path" set "AI_CHAT_PATH=%%B"
     if /I "%%A"=="ai.analysis.api-key" set "AI_API_KEY=%%B"
     if /I "%%A"=="ai.analysis.model" set "AI_MODEL=%%B"
@@ -56,7 +60,10 @@ echo Database target: %DB_HOST%:%DB_PORT%/%DB_NAME%
 echo Python service: %PYTHON_HOST%:%PYTHON_PORT%
 echo.
 
-set "SPRING_ARGS=--spring.datasource.url=jdbc:mysql://%DB_HOST%:%DB_PORT%/%DB_NAME%?useSSL=false^&allowPublicKeyRetrieval=true^&serverTimezone=Asia/Shanghai --spring.datasource.username=%DB_USERNAME% --spring.datasource.password=%DB_PASSWORD% --python.service.host=%PYTHON_HOST% --python.service.port=%PYTHON_PORT% --app.temp-folder=%TEMP_FOLDER% --app.storage-folder=%STORAGE_FOLDER% --app.dataset-storage-folder=%DATASET_STORAGE_FOLDER% --ai.analysis.enabled=%AI_ENABLED% --ai.analysis.base-url=%AI_BASE_URL% --ai.analysis.chat-completions-path=%AI_CHAT_PATH% --ai.analysis.api-key=%AI_API_KEY% --ai.analysis.model=%AI_MODEL%"
+echo AI interface: %AI_INTERFACE%
+echo.
+
+set "SPRING_ARGS=--spring.datasource.url=jdbc:mysql://%DB_HOST%:%DB_PORT%/%DB_NAME%?useSSL=false^&allowPublicKeyRetrieval=true^&serverTimezone=Asia/Shanghai --spring.datasource.username=%DB_USERNAME% --spring.datasource.password=%DB_PASSWORD% --python.service.host=%PYTHON_HOST% --python.service.port=%PYTHON_PORT% --app.temp-folder=%TEMP_FOLDER% --app.storage-folder=%STORAGE_FOLDER% --app.dataset-storage-folder=%DATASET_STORAGE_FOLDER% --ai.analysis.enabled=%AI_ENABLED% --ai.analysis.base-url=%AI_BASE_URL% --ai.analysis.api-interface=%AI_INTERFACE% --ai.analysis.responses-path=%AI_RESPONSES_PATH% --ai.analysis.chat-completions-path=%AI_CHAT_PATH% --ai.analysis.api-key=%AI_API_KEY% --ai.analysis.model=%AI_MODEL%"
 
 echo Starting ACASB Java Backend on port 8080...
 if exist "%SCRIPT_DIR%ACASB.jar" (

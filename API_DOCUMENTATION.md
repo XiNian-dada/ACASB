@@ -2,91 +2,762 @@
 
 Base URL: `http://localhost:8080`
 
-Python 分析服务默认地址：`http://localhost:5000`
+本文档按“前端优先”顺序整理当前项目接口。
 
 说明：
 
-- Java 服务对外提供统一接口。
-- `/api/analyze` 在传统图像特征基础上，支持额外输出 `ai_analysis` 和 `ai_analyze`。
-- 鉴权逻辑已预留，但当前默认关闭。
+- 前端直接需要的 `/api/dashboard/*`、`/api/experience/*`、`/api/dataset/*` 放在最前面。
+- 文档以当前代码实现和实际返回结构为准。
+- 部分大屏接口属于“近似实现”，即功能与设计稿对齐，但底层统计口径会明确说明。
+- 老接口 `/data/*` 和图像分析接口 `/api/analyze` 仍然保留，放在后半部分。
 
-## 1. 接口总览
+## 1. 鉴权与通用约定
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/api/health` | Java 健康检查 |
-| `GET` | `/api/test` | Java 图像接口测试 |
-| `POST` | `/api/predict` | 建筑二分类预测，默认关闭 |
-| `POST` | `/api/analyze` | 图像特征分析，保留 19 维特征并可附加云端 AI 解析 |
-| `POST` | `/data/add` | 单张图片入库 |
-| `POST` | `/data/batch` | 批量图片入库 |
-| `GET` | `/data/analysis/{id}` | 查询分析详情 |
-| `GET` | `/data/type/{id}` | 查询预测详情 |
-| `GET` | `/data/list` | 排序查询分析记录 |
-| `GET` | `/testPython` | 透传 Python 健康检查 |
-| `POST` | `/api/dataset/import-folder` | 导入本机目录中的高质量标注数据 |
-| `POST` | `/api/dataset/import-manifest` | 导入指定 manifest 文件 |
-| `POST` | `/api/dataset/upload-manifest` | 上传一个 manifest 和对应图片数组 |
-| `POST` | `/api/dataset/upload-record` | 上传单张图片和对应 JSON |
-| `GET` | `/api/dataset/records` | 查询高质量标注记录 |
-| `GET` | `/api/dataset/records/{id}` | 查询单条高质量标注记录 |
-| `GET` | `/api/dataset/stats/overview` | 汇总统计 |
-| `GET` | `/api/dataset/stats/regions` | 省级区域统计 |
-| `GET` | `/api/dataset/stats/colors` | 核心色彩聚合统计 |
-| `GET` | `/api/dataset/stats/ranks` | 建筑等级统计 |
-| `GET` | `/api/dataset/stats/styles` | 建筑风格统计 |
+### 1.1 鉴权
 
-## 2. 通用说明
+部署包默认会在 Java 启动日志中打印本次实例的 Bearer Token。
 
-### 2.1 `enable_ai`
+如启用了鉴权，请在请求头中附带：
 
-支持 `enable_ai` 的接口：
+```http
+Authorization: Bearer <token>
+```
 
-- `POST /api/analyze`
-- `POST /data/add`
-- `POST /data/batch`
+### 1.2 返回格式
 
-行为：
+当前项目存在两类返回格式：
 
-- 如果传 `enable_ai=true`，本次请求强制启用云端 AI 解析。
-- 如果不传，按 `ai.analysis.enabled` 的全局配置决定。
-- AI 解析失败不会让传统图像特征提取失败，失败原因会追加到返回的 `message`。
-
-### 2.2 `ai_analysis` 与 `ai_analyze`
-
-可能出现于：
-
-- `/api/analyze` 返回体
-- `/data/add` 返回体
-- `/data/analysis/{id}`
-- `/data/list`
-
-字段含义：
+1. 新接口统一包装：
 
 ```json
 {
-  "ai_analysis": {
-    "province_level_region": "北京市",
-    "dynasty_guess": "清",
-    "building_rank": "皇家",
-    "analysis_status": "success"
-  },
-  "ai_analyze": "{\"province_level_region\":\"北京市\",...}"
+  "code": 200,
+  "msg": "success",
+  "data": {}
 }
 ```
 
-- `ai_analysis` 是解析后的结构化建筑字段。
-- `ai_analyze` 是云端模型返回的原始文本，通常是 JSON 字符串。
+2. 老接口直接返回：
 
-## 3. `POST /api/predict`
+```json
+{
+  "success": true,
+  "message": "查询成功",
+  "data": []
+}
+```
 
-使用 Python MLP 模型判断图片更接近 `royal` 还是 `civilian`。
+### 1.3 朝代参数
 
-默认情况下 `local.model.prediction-enabled=false`，此接口会直接返回“本地训练模型预测已禁用”。
+大屏接口中的 `dynasty` 当前支持：
 
-### 请求
+- `tang` / `song` / `yuan` / `ming` / `qing`
+- `唐` / `宋` / `元` / `明` / `清`
 
-`Content-Type: application/json`
+### 1.4 AI 参数
+
+部分接口支持 `enable_ai`：
+
+- `/api/analyze`
+- `/data/add`
+- `/data/batch`
+- `/api/experience/validate`
+
+行为：
+
+- 传 `enable_ai=true` 时，本次请求强制启用云端 AI。
+- 不传时按全局配置 `ai.analysis.enabled` 决定。
+- AI 失败不会中断本地特征分析和规则校验，接口仍返回基础结果。
+
+## 2. 前端优先：大屏统计接口
+
+这一组接口优先面向首页大屏。
+
+### 2.1 建筑色彩等级数据
+
+**请求地址**: `GET /api/dashboard/color-levels`
+
+**功能描述**：
+
+用于首页左上角“建筑色彩等级”卡片。统计当前数据集中不同社会等级的建筑数量，并返回固定 UI 色值。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `datasetName` | string | 否 | 数据集名称，默认 `competition-dataset` |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "datasetName": "competition-dataset",
+    "colorLevels": [
+      { "name": "皇家", "value": 57, "percent": "38.5%", "color": "#f3b746" },
+      { "name": "王公", "value": 0, "percent": "0.0%", "color": "#5e9c45" },
+      { "name": "官员", "value": 148, "percent": "100.0%", "color": "#3c8dbc" },
+      { "name": "富户", "value": 0, "percent": "0.0%", "color": "#666666" },
+      { "name": "平民", "value": 107, "percent": "72.3%", "color": "#333333" }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| `colorLevels[].name` | string | 等级名称，固定为 `皇家/王公/官员/富户/平民` |
+| `colorLevels[].value` | integer | 当前等级建筑数量 |
+| `colorLevels[].percent` | string | 当前值相对于最大等级值的百分比 |
+| `colorLevels[].color` | string | 该等级对应的固定 UI 色值 |
+
+**实现说明**：
+
+- 真实统计字段来自 `building_rank`。
+- 当前数据集中如果某等级没有样本，返回 `0`，不会缺项。
+
+### 2.2 朝代基础数据面板
+
+**请求地址**: `GET /api/dashboard/dynasty-stats`
+
+**功能描述**：
+
+用于首页左下角“朝代数据”卡片。返回指定朝代下的建筑总数，以及黄色、红色、绿色三类核心色的使用情况。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 | 示例 |
+|---|---|---|---|---|
+| `dynasty` | string | 是 | 朝代标识符 | `qing` |
+| `datasetName` | string | 否 | 数据集名称 | `competition-dataset` |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "dynastyName": "清朝",
+    "totalBuildings": 263,
+    "yellowCount": 93,
+    "redCount": 149,
+    "greenCount": 33
+  }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| `dynastyName` | string | 朝代中文名 |
+| `totalBuildings` | integer | 该朝代建筑总数 |
+| `yellowCount` | integer | 黄色家族建筑计数 |
+| `redCount` | integer | 红色家族建筑计数 |
+| `greenCount` | integer | 绿色家族建筑计数 |
+
+**实现说明**：
+
+- 当前按颜色词家族聚合，不是逐像素 HSV 聚类。
+- `yellowCount/redCount/greenCount` 的口径是“该图中出现该颜色家族且占比达到一定阈值”。
+
+### 2.3 中国建筑色彩地理分布数据
+
+**请求地址**: `GET /api/dashboard/map-distribution`
+
+**功能描述**：
+
+用于首页中央中国地图。按朝代统计宏观地理区域的建筑数量，并返回区域对应的省份列表。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 | 示例 |
+|---|---|---|---|---|
+| `dynasty` | string | 是 | 朝代标识符 | `qing` |
+| `datasetName` | string | 否 | 数据集名称 | `competition-dataset` |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "maxCount": 68,
+    "regions": [
+      { "name": "华东地区", "value": 68, "provinces": ["上海市", "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省"] },
+      { "name": "华中地区", "value": 60, "provinces": ["河南省", "湖北省", "湖南省"] }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| `maxCount` | integer | 全区域最大值，前端可用于 `visualMap.max` |
+| `regions` | array | 宏观区域统计列表 |
+| `regions[].name` | string | 区域名称 |
+| `regions[].value` | integer | 区域建筑数量 |
+| `regions[].provinces` | array | 该区域映射的省级行政区列表 |
+
+**实现说明**：
+
+- 底层真实数据是省级字段 `province_level_region`。
+- 当前接口内部统一映射到 `华北/东北/华东/华中/华南/西南/西北` 七个区域。
+
+### 2.4 朝代核心色彩与文化标签
+
+**请求地址**: `GET /api/dashboard/core-colors`
+
+**功能描述**：
+
+用于首页右侧“核心色彩”区域。返回指定朝代下最显著的 4 种颜色，以及对应文化标签。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 | 示例 |
+|---|---|---|---|---|
+| `dynasty` | string | 是 | 朝代标识符 | `song` |
+| `datasetName` | string | 否 | 数据集名称 | `competition-dataset` |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "dynastyName": "宋朝",
+    "colors": [
+      { "name": "青", "hex": "#7fb2c5", "count": 2 },
+      { "name": "白", "hex": "#f2eada", "count": 2 }
+    ],
+    "cultureTags": ["素雅含蓄", "青白淡彩", "园林诗意", "文人审美"]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| `dynastyName` | string | 朝代名称 |
+| `colors` | array | 核心色彩列表，最多 4 个 |
+| `colors[].name` | string | 简化后的颜色名称 |
+| `colors[].hex` | string | 颜色近似 UI 色值 |
+| `colors[].count` | integer | 该颜色出现的图片数 |
+| `cultureTags` | array | 朝代审美标签，通常 4 个 |
+
+**实现说明**：
+
+- 颜色来自 `building_color_distribution` 聚合结果。
+- `hex` 由颜色词映射为近似展示色，不是图片原始采样值。
+
+### 2.5 朝代色彩使用分析（雷达图）
+
+**请求地址**: `GET /api/dashboard/color-analysis`
+
+**功能描述**：
+
+用于首页右上角雷达图。按固定六个维度返回 0-100 的得分。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 | 示例 |
+|---|---|---|---|---|
+| `dynasty` | string | 是 | 朝代标识符 | `qing` |
+| `datasetName` | string | 否 | 数据集名称 | `competition-dataset` |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "dynastyName": "清朝",
+    "indicators": [
+      { "name": "黄色使用", "value": 35, "max": 100 },
+      { "name": "饱和度", "value": 53, "max": 100 },
+      { "name": "明度", "value": 52, "max": 100 },
+      { "name": "青色", "value": 14, "max": 100 },
+      { "name": "绿色", "value": 8, "max": 100 },
+      { "name": "红色", "value": 24, "max": 100 }
+    ],
+    "note": "饱和度与明度基于入库颜色词的启发式色彩映射估算"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| `dynastyName` | string | 当前朝代名称 |
+| `indicators` | array | 固定 6 个维度 |
+| `indicators[].name` | string | 维度名称 |
+| `indicators[].value` | integer | 0-100 分值 |
+| `indicators[].max` | integer | 固定为 `100` |
+
+**前端说明**：
+
+- 六个维度顺序固定，前端可直接绑定雷达图。
+- `饱和度` 与 `明度` 当前为启发式估算，不是直接读取原图 HSV。
+
+### 2.6 社会等级建筑数量统计
+
+**请求地址**: `GET /api/dashboard/level-stats`
+
+**功能描述**：
+
+用于左侧横向柱状图。返回指定朝代下不同等级建筑数量与相对比例。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 | 示例 |
+|---|---|---|---|---|
+| `dynasty` | string | 是 | 朝代标识符 | `qing` |
+| `datasetName` | string | 否 | 数据集名称 | `competition-dataset` |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "dynastyName": "清朝",
+    "levels": [
+      { "label": "皇家建筑", "value": 54, "ratio": 0.365 },
+      { "label": "王公建筑", "value": 0, "ratio": 0.0 },
+      { "label": "官员建筑", "value": 143, "ratio": 1.0 },
+      { "label": "富户建筑", "value": 0, "ratio": 0.0 },
+      { "label": "平民建筑", "value": 66, "ratio": 0.462 }
+    ]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| `levels[].label` | string | 等级标签 |
+| `levels[].value` | integer | 当前等级建筑数量 |
+| `levels[].ratio` | number | 相对于当前朝代最大等级值的比例 |
+
+### 2.7 多朝代建筑等级分布对比
+
+**请求地址**: `GET /api/dashboard/dynasty-comparison`
+
+**功能描述**：
+
+用于底部堆叠柱状图，对比唐宋元明清五个朝代的等级分布。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `datasetName` | string | 否 | 数据集名称 |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "timeline": ["唐", "宋", "元", "明", "清"],
+    "series": [
+      { "rankName": "皇家", "data": [1, 0, 0, 2, 54], "color": "#f3b746" },
+      { "rankName": "王公", "data": [0, 0, 0, 0, 0], "color": "#5e9c45" }
+    ],
+    "description": "基于当前入库数据，对唐、宋、元、明、清五个朝代的建筑等级分布进行对比。"
+  }
+}
+```
+
+**实现说明**：
+
+- 时间轴固定为 `唐/宋/元/明/清`。
+- 当前数据缺失的等级会返回 `0`，不会缺项。
+
+### 2.8 历代色彩趋势变化与核心色值
+
+**请求地址**: `GET /api/dashboard/history-trend`
+
+**功能描述**：
+
+用于底部趋势图。返回四类代表性建筑材料/色彩在不同朝代锚点上的趋势。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `datasetName` | string | 否 | 数据集名称 |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "years": [618, 960, 1271, 1368, 1644],
+    "series": [
+      { "materialName": "黄色琉璃瓦", "data": [0, 0, 0, 6, 349], "color": "#f3b746" },
+      { "materialName": "红色墙体", "data": [6, 36, 0, 92, 644], "color": "#e65d25" }
+    ],
+    "cultureTags": ["礼制色彩", "地域风格", "材质层次", "时代演变"],
+    "description": "使用唐、宋、元、明、清五个朝代锚点，按颜色材质代理词统计历史色彩趋势。"
+  }
+}
+```
+
+**实现说明**：
+
+- 当前不是连续年份统计，而是使用五个朝代锚点近似表达趋势。
+- 适合前端面积图展示，但不应当解释为逐年史料曲线。
+
+### 2.9 主要区域建筑等级分布（混合图表）
+
+**请求地址**: `GET /api/dashboard/region-rank-dist`
+
+**功能描述**：
+
+用于底部混合图。比较当前样本最多的 5 个省级区域的等级分布。
+
+**请求参数**：
+
+无。
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "provinces": ["江苏省", "福建省", "湖北省", "云南省", "湖南省"],
+    "series": [
+      { "name": "皇家", "type": "bar", "data": [4, 1, 1, 8, 4], "color": "#f3b746" },
+      { "name": "官员", "type": "bar", "data": [31, 20, 14, 12, 11], "color": "#3c8dbc" },
+      { "name": "平民", "type": "line", "data": [24, 16, 21, 11, 9], "color": "#666666" },
+      { "name": "总量", "type": "line", "data": [59, 37, 36, 31, 24], "color": "#111111", "lineStyle": "dashed" }
+    ],
+    "description": "基于当前数据集中样本数最多的 5 个省级区域，展示主要建筑等级分布与总量趋势。"
+  }
+}
+```
+
+**实现说明**：
+
+- 当前不是固定返回“北京/陕西/江苏/浙江/山西”。
+- 实际返回的是当前数据集中样本最多的前 5 个省级区域。
+
+### 2.10 建筑材料成本与工艺分析
+
+**请求地址**: `GET /api/dashboard/material-analysis`
+
+**功能描述**：
+
+用于“材料成本”分组柱状图。返回材料在工艺难度、成本指数、稀有度三个维度上的指数化结果。
+
+**请求参数**：
+
+无。
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "dimensions": ["工艺难度", "成本指数", "稀有度"],
+    "materials": [
+      { "name": "黄色琉璃瓦", "values": [95, 98, 92], "colors": ["#f3b746", "#e65d25", "#3c8dbc"] },
+      { "name": "青色瓦片", "values": [45, 45, 30], "colors": ["#f3b746", "#e65d25", "#3c8dbc"] }
+    ],
+    "description": "材料成本分析当前为规则化启发式指数，用于大屏材料成本对比展示。"
+  }
+}
+```
+
+**实现说明**：
+
+- 该接口当前是规则化启发式结果。
+- 适合可视化展示，不直接对应数据库原始字段。
+
+## 3. 前端优先：互动体验接口
+
+### 3.1 社会等级配色方案查询
+
+**请求地址**: `GET /api/experience/rank-rules`
+
+**功能描述**：
+
+用于体验页初始化，根据身份等级返回可用色彩池。
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 | 示例 |
+|---|---|---|---|---|
+| `rankId` | string | 是 | 身份标识符 | `civilian` |
+
+**支持值**：
+
+- `emperor`
+- `noble`
+- `official`
+- `wealthy`
+- `civilian`
+
+也支持中文别名：
+
+- `皇家`
+- `王公`
+- `官员`
+- `富户`
+- `平民`
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "rankId": "civilian",
+    "rankName": "平民",
+    "maxColors": 3,
+    "availableColors": [
+      { "name": "灰色", "hex": "#888888", "description": "布瓦本色" },
+      { "name": "青色", "hex": "#2c5a7d", "description": "常用建筑用色" },
+      { "name": "黑色", "hex": "#333333", "description": "普通木材本色" }
+    ],
+    "note": "当前规则为礼制体验启发式色彩池，适合前端互动页初始化。"
+  }
+}
+```
+
+### 3.2 配色合法性校验
+
+**请求地址**: `POST /api/experience/validate`
+
+**功能描述**：
+
+提交用户配色方案，返回是否越制、风险等级、反馈文案和文化知识点。
+
+**请求参数**：
+
+- Query: `enable_ai` 可选，开启后会调用云端 AI 对反馈文案做润色。
+
+**请求体**：
+
+```json
+{
+  "rankId": "civilian",
+  "selections": [
+    { "part": "屋顶", "colorHex": "#ffbb00" },
+    { "part": "墙体", "colorHex": "#888888" }
+  ]
+}
+```
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "isValid": false,
+    "resultTitle": "僭越警告！",
+    "resultLevel": "danger",
+    "feedback": "作为平民，您的屋顶使用了黄色，该颜色更接近皇家礼制配色。",
+    "knowledgePoint": "历史知识：黄色在明清礼制中高度象征皇权。",
+    "rankName": "平民",
+    "selectionCount": 2,
+    "violations": [
+      { "part": "屋顶", "colorHex": "#ffbb00", "reservedFor": "皇家", "colorName": "黄色" }
+    ]
+  }
+}
+```
+
+**实现说明**：
+
+- 核心合法性判断当前为本地规则引擎。
+- `enable_ai=true` 时，云端 AI 只负责润色 `feedback` 与 `knowledgePoint`，不会推翻基础判定。
+
+## 4. 前端优先：高质量数据集查询接口
+
+这一组接口用于前端列表页、详情页、后台管理页、大屏数据源。
+
+### 4.1 查询数据集记录列表
+
+**请求地址**: `GET /api/dataset/records`
+
+**功能描述**：
+
+分页查询高质量标注记录。
+
+**常用参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `datasetName` | string | 否 | 数据集名称 |
+| `groupName` | string | 否 | 分组名称，如 `华东地区` |
+| `dynasty` | string | 否 | 朝代 |
+| `province` | string | 否 | 省级区域 |
+| `rank` | string | 否 | 建筑等级 |
+| `sceneType` | string | 否 | 场景类型 |
+| `manualReview` | boolean | 否 | 是否需人工复核 |
+| `analysisStatus` | string | 否 | 分析状态 |
+| `keyword` | string | 否 | 关键字搜索 |
+| `limit` | integer | 否 | 每页数量，默认 20，最大 200 |
+| `offset` | integer | 否 | 偏移量 |
+
+**返回示例**：
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "total": 312,
+    "limit": 20,
+    "offset": 0,
+    "note": "relativePath/groupRelativePath 为 ASCII 规范路径，originalRelativePath/originalGroupRelativePath 保留原始中文路径",
+    "items": []
+  }
+}
+```
+
+**说明**：
+
+- `relativePath` / `groupRelativePath` 为 ASCII 规范路径。
+- `originalRelativePath` / `originalGroupRelativePath` 保留中文原始路径。
+
+### 4.2 查询单条数据集记录
+
+**请求地址**: `GET /api/dataset/records/{id}`
+
+按数据库主键查询一条记录。
+
+### 4.3 按分组序号查询
+
+**请求地址**: `GET /api/dataset/record-by-index`
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `datasetName` | string | 是 | 数据集名称 |
+| `groupName` | string | 是 | 分组名称 |
+| `imageIndex` | integer | 是 | 分组内序号 |
+
+**说明**：
+
+- `imageIndex` 是分组内排序序号。
+- 它不一定等于文件名数字，例如 `47.jpg` 可能对应 `imageIndex=54`。
+
+### 4.4 按分组和文件名查询
+
+**请求地址**: `GET /api/dataset/record-by-file`
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `datasetName` | string | 是 | 数据集名称 |
+| `groupName` | string | 是 | 分组名称 |
+| `fileName` | string | 是 | 文件名，例如 `47.jpg` |
+
+### 4.5 数据集统计概览
+
+**请求地址**: `GET /api/dataset/stats/overview`
+
+返回：
+
+- 总记录数
+- 成功记录数
+- 人工复核数
+- 朝代分布
+- 等级分布
+- 场景类型分布
+- 省级区域分布
+- 分组分布
+
+### 4.6 区域统计
+
+**请求地址**: `GET /api/dataset/stats/regions`
+
+返回省级区域统计列表。
+
+### 4.7 色彩统计
+
+**请求地址**: `GET /api/dataset/stats/colors`
+
+返回颜色词聚合结果，可用于大屏颜色排行。
+
+### 4.8 等级统计
+
+**请求地址**: `GET /api/dataset/stats/ranks`
+
+返回建筑等级聚合结果。
+
+### 4.9 风格统计
+
+**请求地址**: `GET /api/dataset/stats/styles`
+
+返回风格词聚合结果。
+
+## 5. 图像分析与基础服务接口
+
+### 5.1 Java 健康检查
+
+**请求地址**: `GET /api/health`
+
+返回示例：
+
+```text
+Java Backend is running!
+```
+
+### 5.2 Java 图像接口测试
+
+**请求地址**: `GET /api/test`
+
+返回示例：
+
+```text
+Image API is working!
+```
+
+### 5.3 Python 健康透传
+
+**请求地址**: `GET /testPython`
+
+返回 Python 服务 `/health` 的结果。
+
+### 5.4 建筑二分类预测
+
+**请求地址**: `POST /api/predict`
+
+**功能描述**：
+
+使用本地 MLP 模型做 `royal/civilian` 二分类预测。
+
+**请求体**：
 
 ```json
 {
@@ -94,57 +765,25 @@ Python 分析服务默认地址：`http://localhost:5000`
 }
 ```
 
-### 成功响应
+**当前默认行为**：
 
-```json
-{
-  "success": true,
-  "message": "Prediction completed",
-  "prediction": "royal",
-  "confidence": 0.8567
-}
-```
+- `local.model.prediction-enabled=false`
+- 默认返回“本地训练模型预测已禁用”
 
-### 字段说明
+### 5.5 图像 19 维特征分析与 AI 解析
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `success` | boolean | 是否成功 |
-| `message` | string | 结果消息 |
-| `prediction` | string | `royal` 或 `civilian` |
-| `confidence` | number | 预测置信度 |
+**请求地址**: `POST /api/analyze`
 
-### 示例
+**功能描述**：
 
-```bash
-curl -X POST http://localhost:8080/api/predict \
-  -H "Content-Type: application/json" \
-  -d '{"image_path":"./uploads/demo.jpg"}'
-```
+返回本地 19 维图像特征，并可附加云端 AI 结构化建筑解析。
 
-## 4. `POST /api/analyze`
+**支持两种请求方式**：
 
-分析图片并返回 19 维图像特征；可额外返回云端 AI 的结构化解析结果和原始文本。
+1. `multipart/form-data`
+2. `application/json`
 
-支持两种请求方式。
-
-### 4.1 方式一：文件上传
-
-`Content-Type: multipart/form-data`
-
-参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `file` | file | 否 | 上传图片 |
-| `image_path` | string | 否 | 表单中的本地图片路径 |
-| `enable_ai` | boolean | 否 | 是否启用 AI 解析 |
-
-说明：`file` 与 `image_path` 二选一。
-
-### 4.2 方式二：JSON 请求
-
-`Content-Type: application/json`
+**JSON 请求体**：
 
 ```json
 {
@@ -153,459 +792,122 @@ curl -X POST http://localhost:8080/api/predict \
 }
 ```
 
-### 成功响应
+也兼容：
 
 ```json
 {
-  "success": true,
-  "message": "Analysis completed",
-  "prediction": null,
-  "confidence": null,
-  "ratio_yellow": 0.0508,
-  "ratio_red_1": 0.5097,
-  "ratio_red_2": 0.011,
-  "ratio_blue": 0.0069,
-  "ratio_green": 0.0083,
-  "ratio_gray_white": 0.3702,
-  "ratio_black": 0.034,
-  "h_mean": 0.0702,
-  "h_std": 0.1356,
-  "s_mean": 0.3527,
-  "s_std": 0.3184,
-  "v_mean": 0.7506,
-  "v_std": 0.272,
-  "edge_density": 0.2024,
-  "entropy": 0.8382,
-  "contrast": 2.3383,
-  "dissimilarity": 0.0488,
-  "homogeneity": 0.4276,
-  "asm": 0.055,
-  "royal_ratio": 0.5714,
-  "ai_analysis": {
-    "province_level_region": "北京市",
-    "province_confidence": 0.82,
-    "dynasty_guess": "清",
-    "building_rank": "皇家",
-    "scene_type": "建筑外观",
-    "building_present": true,
-    "building_primary_colors": ["红色", "黄色", "灰色"],
-    "building_color_distribution": [
-      { "color": "红色", "ratio": 0.52 },
-      { "color": "黄色", "ratio": 0.28 },
-      { "color": "灰色", "ratio": 0.2 }
-    ],
-    "architecture_style": ["皇家官式古建"],
-    "scene_description": "画面主体为建筑外观中的近代以前传统建筑，建筑主体色彩分布为红色约占52%，黄色约占28%，灰色约占20%，朝代判断归入清，建筑等级归入皇家。",
-    "reasoning": [
-      "建筑主体颜色分布清楚，红色约占52%，黄色约占28%，灰色约占20%。",
-      "屋顶形制与礼制色彩组合明确，整体属于近代以前的皇家官式古建体系。"
-    ],
-    "needs_manual_review": false,
-    "file_name": "demo.jpg",
-    "relative_path": "demo.jpg",
-    "analysis_status": "success",
-    "error_message": ""
-  },
-  "ai_analyze": "{\"province_level_region\":\"北京市\",\"province_confidence\":0.82,...}"
+  "imagePath": "./uploads/demo.jpg",
+  "enableAi": true
 }
 ```
 
-### 传统特征字段
+**返回关键字段**：
 
-| 字段 | 说明 |
-|---|---|
-| `ratio_yellow` | 黄色占比 |
-| `ratio_red_1` / `ratio_red_2` | 红色占比 |
-| `ratio_blue` | 蓝色占比 |
-| `ratio_green` | 绿色占比 |
-| `ratio_gray_white` | 灰白占比 |
-| `ratio_black` | 黑色占比 |
-| `h_mean` / `h_std` | 色相均值 / 标准差 |
-| `s_mean` / `s_std` | 饱和度均值 / 标准差 |
-| `v_mean` / `v_std` | 明度均值 / 标准差 |
-| `edge_density` | 边缘密度 |
-| `entropy` | 熵值 |
-| `contrast` | GLCM 对比度 |
-| `dissimilarity` | GLCM 不相似度 |
-| `homogeneity` | GLCM 同质性 |
-| `asm` | GLCM 角二阶矩 |
-| `royal_ratio` | 皇家色彩占比，等于黄色 + 红色占比 |
-| `ai_analysis` | 云端 AI 结构化建筑解析结果 |
-| `ai_analyze` | 云端 AI 原始输出文本 |
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| `ratio_yellow` ~ `royal_ratio` | number | 本地 19 维特征 |
+| `ai_analysis` | object | 云端 AI 结构化解析 |
+| `ai_analyze` | string | 云端 AI 原始输出文本 |
 
-### 示例
+**说明**：
 
-文件上传：
+- 即使 AI 失败，本地特征也会返回。
+- `ai_analysis.analysis_status` 可用于前端判断 AI 是否成功。
 
-```bash
-curl -X POST "http://localhost:8080/api/analyze?enable_ai=true" \
-  -F "file=@./example.jpg"
-```
+## 6. 旧版入库查询接口
 
-JSON 请求：
+### 6.1 查询分析详情
 
-```bash
-curl -X POST http://localhost:8080/api/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"image_path":"./uploads/demo.jpg","enable_ai":true}'
-```
+**请求地址**: `GET /data/analysis/{id}`
 
-## 5. `POST /data/add`
+按 `building_analysis.id` 查询单条分析记录。
 
-上传单张图片，完成分析、预测、入库，并返回持久化结果。
+### 6.2 查询预测详情
 
-### 请求
+**请求地址**: `GET /data/type/{id}`
 
-`Content-Type: multipart/form-data`
+按 `building_type.id` 查询单条预测记录。
 
-| 参数 | 类型 | 必填 | 说明 |
+### 6.3 分析记录列表
+
+**请求地址**: `GET /data/list`
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `file` | file | 是 | 上传图片 |
-| `enable_ai` | boolean | 否 | 是否启用 AI 解析 |
+| `field` | string | 否 | 排序字段 |
+| `order` | string | 否 | `asc` / `desc` |
+| `limit` | integer | 否 | 数量上限 |
+| `prediction` | string | 否 | 预测值过滤 |
 
-### 成功响应
+**说明**：
 
-```json
-{
-  "success": true,
-  "message": "数据添加成功",
-  "analysisId": 12,
-  "typeId": null,
-  "storedImagePath": "/abs/path/uploads/7c...a.jpg",
-  "ai_analyze": "推测为官式建筑，主体颜色以红色与黄色为主。"
-}
-```
-
-说明：
-
-- 当 `local.model.prediction-enabled=false` 时，`typeId` 会是 `null`。
-
-### 示例
-
-```bash
-curl -X POST "http://localhost:8080/data/add?enable_ai=true" \
-  -F "file=@./example.jpg"
-```
-
-## 6. `POST /data/batch`
-
-批量上传并入库。
-
-### 请求
+- 当 `field` 为空时，当前默认按 `royal_ratio desc` 返回。
+- 如果库里没有通过 `/data/add` 或 `/data/batch` 入库过记录，列表会返回空数组。
 
-`Content-Type: multipart/form-data`
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `files` | file[] | 是 | 多张图片 |
-| `enable_ai` | boolean | 否 | 是否启用 AI 解析 |
-
-### 成功响应
-
-```json
-{
-  "totalCount": 2,
-  "successCount": 2,
-  "failureCount": 0,
-  "items": [
-    {
-      "fileName": "a.jpg",
-      "analysisId": 21,
-      "typeId": 21,
-      "success": true,
-      "message": "上传成功"
-    }
-  ]
-}
-```
-
-### 示例
-
-```bash
-curl -X POST "http://localhost:8080/data/batch?enable_ai=true" \
-  -F "files=@./a.jpg" \
-  -F "files=@./b.jpg"
-```
-
-## 7. `GET /data/analysis/{id}`
-
-查询分析详情。除了传统特征外，还会返回入库时保存的 `ai_analyze` 原始文本。
-
-### 示例
-
-```bash
-curl http://localhost:8080/data/analysis/12
-```
-
-### 响应示例
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": 12,
-    "imagePath": "/abs/path/uploads/7c...a.jpg",
-    "royalRatio": 0.57,
-    "ai_analyze": "推测为官式建筑，风格偏明清官式，年代判断大致在明清时期。"
-  }
-}
-```
-
-## 8. `GET /data/type/{id}`
-
-查询预测记录。
-
-### 示例
-
-```bash
-curl http://localhost:8080/data/type/12
-```
-
-### 响应示例
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": 12,
-    "imagePath": "/abs/path/uploads/7c...a.jpg",
-    "prediction": "royal",
-    "confidence": 0.91,
-    "analysisId": 12
-  }
-}
-```
-
-## 9. `GET /data/list`
-
-按指定字段排序返回分析结果，支持 `prediction` 过滤。
-
-### 查询参数
-
-| 参数 | 必填 | 默认值 | 说明 |
-|---|---|---|---|
-| `field` | 否 | `royalRatio` | 排序字段 |
-| `order` | 否 | `desc` | `asc` 或 `desc` |
-| `limit` | 否 | `10` | 返回数量，最大 `200` |
-| `prediction` | 否 | 无 | `royal` 或 `civilian` |
-
-### 可排序字段
-
-- `royalRatio`
-- `edgeDensity`
-- `entropy`
-- `contrast`
-- `dissimilarity`
-- `homogeneity`
-- `asm`
-- `ratioYellow`
-- `ratioRed1`
-- `ratioRed2`
-- `ratioBlue`
-- `ratioGreen`
-- `ratioGrayWhite`
-- `ratioBlack`
-- `hMean`
-- `hStd`
-- `sMean`
-- `sStd`
-- `vMean`
-- `vStd`
-- `createTime`
-- `updateTime`
-
-### 示例
-
-查询皇家比例最高的 5 条：
-
-```bash
-curl "http://localhost:8080/data/list?field=royalRatio&order=desc&limit=5"
-```
-
-查询预测为 `royal` 的记录：
-
-```bash
-curl "http://localhost:8080/data/list?field=royalRatio&order=desc&prediction=royal&limit=10"
-```
-
-### 响应示例
-
-```json
-{
-  "success": true,
-  "count": 2,
-  "message": "查询成功",
-  "data": [
-    {
-      "id": 12,
-      "imagePath": "/abs/path/uploads/7c...a.jpg",
-      "prediction": "royal",
-      "confidence": 0.91,
-      "royalRatio": 0.57,
-      "ai_analyze": "推测为官式建筑，风格偏明清官式。"
-    }
-  ]
-}
-```
-
-## 10. 健康检查接口
-
-### `GET /api/health`
-
-```bash
-curl http://localhost:8080/api/health
-```
-
-### `GET /testPython`
-
-```bash
-curl http://localhost:8080/testPython
-```
-
-## 11. 高质量标注数据接口
-
-这批真实数据的字段核心是：
-
-- `province_level_region`
-- `dynasty_guess`
-- `building_rank`
-- `scene_type`
-- `building_primary_colors`
-- `building_color_distribution`
-- `architecture_style`
-- `scene_description`
-- `reasoning`
-- `needs_manual_review`
-
-### `POST /api/dataset/import-folder`
-
-导入服务端本机已有的数据目录。默认会导入当前工作区下的 `计算机设计大赛`。
-
-请求体：
-
-```json
-{
-  "dataset_path": "./计算机设计大赛",
-  "dataset_name": "competition-dataset",
-  "copy_images": true
-}
-```
+## 7. 上传与导入接口
 
-说明：
+这一组接口保留在文档末尾，供后台或运维使用。
 
-- `copy_images=true` 时，图片会复制到 `app.dataset-storage-folder`
-- 服务端会自动把中文目录转换成 ASCII 规范路径
+### 7.1 单张图片入库
 
-### `POST /api/dataset/upload-manifest`
+**请求地址**: `POST /data/add`
 
-`Content-Type: multipart/form-data`
+上传单张图片，完成：
 
-参数：
+- 19 维特征分析
+- 可选 AI 解析
+- 持久化图片
+- 写入 `building_analysis`
+- 若本地预测开启，再写入 `building_type`
 
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `manifest` | file | 是 | 区域目录中的 `analysis.json` |
-| `images` | file[] | 是 | manifest 中引用的图片文件 |
-| `dataset_name` | string | 否 | 数据集名称 |
+### 7.2 批量图片入库
 
-### `POST /api/dataset/upload-record`
+**请求地址**: `POST /data/batch`
 
-`Content-Type: multipart/form-data`
+批量处理多张图片并返回逐项结果。
 
-参数：
+### 7.3 导入服务端目录
 
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `file` | file | 是 | 图片文件 |
-| `metadata` | string | 否 | 单图 JSON 字符串 |
-| `metadata_file` | file | 否 | 单图 JSON 文件 |
-| `dataset_name` | string | 否 | 数据集名称 |
-| `group_name` | string | 否 | 组中文名称 |
-| `group_relative_path` | string | 否 | 原始组路径 |
+**请求地址**: `POST /api/dataset/import-folder`
 
-说明：`metadata` 和 `metadata_file` 二选一。
+从服务端本机目录导入高质量数据集。
 
-### `GET /api/dataset/records`
+### 7.4 导入指定 manifest
 
-查询参数：
+**请求地址**: `POST /api/dataset/import-manifest`
 
-| 参数 | 说明 |
-|---|---|
-| `datasetName` | 数据集名称 |
-| `groupName` | 区域组名称，如 `中南地区` |
-| `dynasty` | 朝代，如 `清` |
-| `province` | 省级区域，如 `湖北省` |
-| `rank` | 建筑等级，如 `皇家`、`官员`、`平民` |
-| `sceneType` | 场景类型，如 `建筑外观`、`建筑群` |
-| `manualReview` | 是否需人工复核 |
-| `analysisStatus` | 分析状态 |
-| `keyword` | 描述/风格/路径模糊搜索 |
-| `limit` | 返回数量，默认 20 |
-| `offset` | 偏移量，默认 0 |
+导入一个已有 `analysis.json` 文件。
 
-返回中的路径字段说明：
+### 7.5 上传 manifest 与图片
 
-- `relativePath` / `groupRelativePath`：ASCII 规范路径
-- `originalRelativePath` / `originalGroupRelativePath`：原始中文路径
+**请求地址**: `POST /api/dataset/upload-manifest`
 
-### `GET /api/dataset/stats/overview`
+上传一个区域目录的 `analysis.json` 和对应图片。
 
-返回当前筛选条件下的：
+### 7.6 上传单条高质量记录
 
-- 总记录数
-- 成功记录数
-- 人工复核数
-- 朝代分布
-- 等级分布
-- 场景分布
-- 省级区域分布
-- 区域组分布
+**请求地址**: `POST /api/dataset/upload-record`
 
-### `GET /api/dataset/stats/regions`
+上传单张图片和单条高质量 JSON 元数据。
 
-返回按 `province_level_region` 聚合后的：
+## 8. 前端对接建议
 
-- 记录数
-- 人工复核数
-- 平均区域置信度
+如果你当前主要在做首页大屏和互动页，推荐只优先接以下接口：
 
-### `GET /api/dataset/stats/colors`
-
-基于 `building_color_distribution` 聚合颜色统计，返回：
-
-- `name`
-- `imageCount`
-- `totalRatio`
-- `averageRatio`
-
-### `GET /api/dataset/stats/ranks`
-
-返回实际数据中的建筑等级统计，目前基于真实数据只会出现：
-
-- `皇家`
-- `官员`
-- `平民`
-
-### `GET /api/dataset/stats/styles`
-
-基于 `architecture_style` 聚合出现频次，便于后续做风格标签云和风格分布图。
-
-## 12. 常见错误
-
-### 图片路径不存在
-
-通常来自 Python 服务，典型表现：
-
-```json
-{
-  "detail": "Image file not found: ..."
-}
-```
-
-### AI 解析未配置
-
-如果 `enable_ai=true`，但未配置 `ai.analysis.api-key`，接口仍会成功返回本地特征，但 `message` 会附带 AI 失败原因。
-
-### Python 模型不存在
-
-`/api/predict` 依赖 `acasb-analysis/models/` 下的模型文件。如果未训练或文件缺失，Python 会返回模型加载失败。
+- 左上等级卡片：`GET /api/dashboard/color-levels`
+- 左下朝代面板：`GET /api/dashboard/dynasty-stats`
+- 中央地图：`GET /api/dashboard/map-distribution`
+- 右侧核心色彩：`GET /api/dashboard/core-colors`
+- 右上雷达图：`GET /api/dashboard/color-analysis`
+- 左侧等级柱状图：`GET /api/dashboard/level-stats`
+- 底部朝代对比：`GET /api/dashboard/dynasty-comparison`
+- 底部趋势图：`GET /api/dashboard/history-trend`
+- 底部区域混合图：`GET /api/dashboard/region-rank-dist`
+- 材料成本图：`GET /api/dashboard/material-analysis`
+- 身份初始化：`GET /api/experience/rank-rules`
+- 提交校验：`POST /api/experience/validate`
+- 列表页数据源：`GET /api/dataset/records`
+- 详情页精确查询：`GET /api/dataset/record-by-index`
+- 文件名精确查询：`GET /api/dataset/record-by-file`

@@ -63,6 +63,8 @@ STORAGE_FOLDER="$(read_prop "storage.folder" "./uploads")"
 DATASET_STORAGE_FOLDER="$(read_prop "dataset.storage.folder" "./dataset-storage")"
 AI_ENABLED="$(read_prop "ai.analysis.enabled" "false")"
 AI_BASE_URL="$(read_prop "ai.analysis.base-url" "https://api.openai.com")"
+AI_INTERFACE="$(read_prop "ai.analysis.api-interface" "responses")"
+AI_RESPONSES_PATH="$(read_prop "ai.analysis.responses-path" "/v1/responses")"
 AI_CHAT_PATH="$(read_prop "ai.analysis.chat-completions-path" "/v1/chat/completions")"
 AI_API_KEY="$(read_prop "ai.analysis.api-key" "")"
 AI_MODEL="$(read_prop "ai.analysis.model" "gpt-4.1-mini")"
@@ -78,6 +80,8 @@ SPRING_ARGS=(
   "--app.dataset-storage-folder=${DATASET_STORAGE_FOLDER}"
   "--ai.analysis.enabled=${AI_ENABLED}"
   "--ai.analysis.base-url=${AI_BASE_URL}"
+  "--ai.analysis.api-interface=${AI_INTERFACE}"
+  "--ai.analysis.responses-path=${AI_RESPONSES_PATH}"
   "--ai.analysis.chat-completions-path=${AI_CHAT_PATH}"
   "--ai.analysis.api-key=${AI_API_KEY}"
   "--ai.analysis.model=${AI_MODEL}"
@@ -85,6 +89,7 @@ SPRING_ARGS=(
 
 echo "Database target: ${DB_HOST}:${DB_PORT}/${DB_NAME}"
 echo "Python service: ${PYTHON_HOST}:${PYTHON_PORT}"
+echo "AI interface: ${AI_INTERFACE}"
 echo
 
 if [[ -f "$SCRIPT_DIR/ACASB.jar" ]]; then

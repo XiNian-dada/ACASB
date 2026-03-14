@@ -50,6 +50,28 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
         return getById(id);
     }
 
+    public DatasetImageRecord getRecordByGroupAndImageIndex(String datasetName, String groupName, Integer imageIndex) {
+        if (!StringUtils.hasText(datasetName) || !StringUtils.hasText(groupName) || imageIndex == null || imageIndex <= 0) {
+            return null;
+        }
+        return getOne(new LambdaQueryWrapper<DatasetImageRecord>()
+                .eq(DatasetImageRecord::getDatasetName, datasetName)
+                .eq(DatasetImageRecord::getGroupName, groupName)
+                .eq(DatasetImageRecord::getImageIndex, imageIndex)
+                .last("LIMIT 1"));
+    }
+
+    public DatasetImageRecord getRecordByGroupAndFileName(String datasetName, String groupName, String fileName) {
+        if (!StringUtils.hasText(datasetName) || !StringUtils.hasText(groupName) || !StringUtils.hasText(fileName)) {
+            return null;
+        }
+        return getOne(new LambdaQueryWrapper<DatasetImageRecord>()
+                .eq(DatasetImageRecord::getDatasetName, datasetName)
+                .eq(DatasetImageRecord::getGroupName, groupName)
+                .eq(DatasetImageRecord::getFileName, fileName)
+                .last("LIMIT 1"));
+    }
+
     public long countFiltered(
             String datasetName,
             String groupName,

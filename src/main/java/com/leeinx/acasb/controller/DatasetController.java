@@ -148,6 +148,30 @@ public class DatasetController {
         return ResponseEntity.ok(ApiResponse.success(datasetImageRecordService.buildRecordView(record)));
     }
 
+    @GetMapping("/record-by-index")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getRecordByIndex(
+            @RequestParam String datasetName,
+            @RequestParam String groupName,
+            @RequestParam Integer imageIndex) {
+        DatasetImageRecord record = datasetImageRecordService.getRecordByGroupAndImageIndex(datasetName, groupName, imageIndex);
+        if (record == null) {
+            return ResponseEntity.ok(ApiResponse.error(404, "未找到对应分组与序号的记录"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(datasetImageRecordService.buildRecordView(record)));
+    }
+
+    @GetMapping("/record-by-file")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getRecordByFile(
+            @RequestParam String datasetName,
+            @RequestParam String groupName,
+            @RequestParam String fileName) {
+        DatasetImageRecord record = datasetImageRecordService.getRecordByGroupAndFileName(datasetName, groupName, fileName);
+        if (record == null) {
+            return ResponseEntity.ok(ApiResponse.error(404, "未找到对应分组与文件名的记录"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(datasetImageRecordService.buildRecordView(record)));
+    }
+
     @GetMapping("/stats/overview")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getOverviewStats(
             @RequestParam(required = false) String datasetName,

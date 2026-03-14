@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.leeinx.acasb.entity.BuildingAnalysis;
 import com.leeinx.acasb.mapper.BuildingAnalysisMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Set;
@@ -50,7 +51,7 @@ public class BuildingAnalysisService extends ServiceImpl<BuildingAnalysisMapper,
     }
     
     public List<BuildingAnalysis> getAnalysesByField(String field, String order, Integer limit) {
-        String dbField = camelToSnake(field);
+        String dbField = StringUtils.hasText(field) ? camelToSnake(field) : "royal_ratio";
         if (!ALLOWED_SORT_FIELDS.contains(dbField)) {
             dbField = "royal_ratio";
         }
