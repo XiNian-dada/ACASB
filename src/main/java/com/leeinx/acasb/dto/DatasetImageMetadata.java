@@ -1,11 +1,13 @@
 package com.leeinx.acasb.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 import java.util.List;
 
 @Data
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class DatasetImageMetadata {
     @JsonProperty("province_level_region")
     private String provinceLevelRegion;

@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import uvicorn
 import logging
 import os
@@ -29,14 +29,17 @@ app = FastAPI(
 extractor = AncientArchExtractor()
 inference = MLPInference()
 
-class TrainRequest(BaseModel):
+class ApiBaseModel(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+class TrainRequest(ApiBaseModel):
     base_dir: str = r"E:\Code\ACASB\datasets"
     save_dir: str = r"E:\Code\ACASB\acasb-analysis\models"
 
-class PredictRequest(BaseModel):
+class PredictRequest(ApiBaseModel):
     image_path: str
 
-class TrainResponse(BaseModel):
+class TrainResponse(ApiBaseModel):
     success: bool
     message: str
     samples_processed: int = None
@@ -45,13 +48,13 @@ class TrainResponse(BaseModel):
     accuracy: float = None
     model_path: str = None
 
-class PredictResponse(BaseModel):
+class PredictResponse(ApiBaseModel):
     success: bool
     message: str
     prediction: str = None
     confidence: float = None
 
-class AnalyzeResponse(BaseModel):
+class AnalyzeResponse(ApiBaseModel):
     success: bool
     message: str
     prediction: Optional[str] = None

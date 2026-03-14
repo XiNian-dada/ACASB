@@ -1,5 +1,6 @@
 package com.leeinx.acasb.controller;
 
+import com.leeinx.acasb.config.LocalModelProperties;
 import com.leeinx.acasb.dto.AiAnalyzeResult;
 import com.leeinx.acasb.dto.BatchUploadResult;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
@@ -34,16 +35,19 @@ public class dataController {
     private final BuildingAnalysisService buildingAnalysisService;
     private final BuildingTypeService buildingTypeService;
     private final OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService;
+    private final LocalModelProperties localModelProperties;
 
     public dataController(
             PythonAnalysisClient pythonAnalysisClient,
             BuildingAnalysisService buildingAnalysisService,
             BuildingTypeService buildingTypeService,
-            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService) {
+            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService,
+            LocalModelProperties localModelProperties) {
         this.pythonAnalysisClient = pythonAnalysisClient;
         this.buildingAnalysisService = buildingAnalysisService;
         this.buildingTypeService = buildingTypeService;
         this.openAiCompatibleBuildingAnalysisService = openAiCompatibleBuildingAnalysisService;
+        this.localModelProperties = localModelProperties;
     }
 
     @Value("${app.storage-folder:./uploads}")
@@ -210,15 +214,17 @@ public class dataController {
         BuildingAnalysis analysis = buildAnalysisEntity(storedPath.toString(), imageFeatures);
         BuildingAnalysis savedAnalysis = buildingAnalysisService.saveAnalysis(analysis);
 
-        ImageAnalysisResult predictionResult = pythonAnalysisClient.predict(storedPath.toString());
         BuildingType savedType = null;
-        if (predictionResult != null && predictionResult.isSuccess()) {
-            BuildingType buildingType = new BuildingType();
-            buildingType.setImagePath(storedPath.toString());
-            buildingType.setPrediction(predictionResult.getPrediction());
-            buildingType.setConfidence(predictionResult.getConfidence());
-            buildingType.setAnalysisId(savedAnalysis.getId());
-            savedType = buildingTypeService.saveType(buildingType);
+        if (localModelProperties.isPredictionEnabled()) {
+            ImageAnalysisResult predictionResult = pythonAnalysisClient.predict(storedPath.toString());
+            if (predictionResult != null && predictionResult.isSuccess()) {
+                BuildingType buildingType = new BuildingType();
+                buildingType.setImagePath(storedPath.toString());
+                buildingType.setPrediction(predictionResult.getPrediction());
+                buildingType.setConfidence(predictionResult.getConfidence());
+                buildingType.setAnalysisId(savedAnalysis.getId());
+                savedType = buildingTypeService.saveType(buildingType);
+            }
         }
 
         return new ProcessedImageData(imageFeatures, savedAnalysis, savedType);

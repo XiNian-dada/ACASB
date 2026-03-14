@@ -1,7 +1,8 @@
 package com.leeinx.acasb.controller;
 
 import com.leeinx.acasb.PredictionRequest;
-import com.leeinx.acasb.dto.AiAnalyzeResult;
+import com.leeinx.acasb.config.LocalModelProperties;
+import com.leeinx.acasb.dto.AiStructuredAnalysisResult;
 import com.leeinx.acasb.dto.AnalyzeRequest;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
 import com.leeinx.acasb.dto.ImageFeatures;
@@ -25,12 +26,15 @@ import java.util.UUID;
 public class ImageController {
     private final PythonAnalysisClient pythonAnalysisClient;
     private final OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService;
+    private final LocalModelProperties localModelProperties;
 
     public ImageController(
             PythonAnalysisClient pythonAnalysisClient,
-            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService) {
+            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService,
+            LocalModelProperties localModelProperties) {
         this.pythonAnalysisClient = pythonAnalysisClient;
         this.openAiCompatibleBuildingAnalysisService = openAiCompatibleBuildingAnalysisService;
+        this.localModelProperties = localModelProperties;
     }
 
     @Value("${app.temp-folder:./temp}")
@@ -38,6 +42,15 @@ public class ImageController {
 
     @PostMapping("/predict")
     public ResponseEntity<ImageAnalysisResult> predict(@RequestBody PredictionRequest request) {
+        if (!localModelProperties.isPredictionEnabled()) {
+            ImageAnalysisResult disabled = new ImageAnalysisResult();
+            disabled.setSuccess(false);
+            disabled.setMessage("本地训练模型预测已禁用，请使用云端 AI 解析字段");
+            disabled.setPrediction(null);
+            disabled.setConfidence(0);
+            return ResponseEntity.ok(disabled);
+        }
+
         try {
             ImageAnalysisResult result = pythonAnalysisClient.predict(request.getImage_path());
             return ResponseEntity.ok(result);
@@ -128,11 +141,14 @@ public class ImageController {
         }
 
         if (result.isSuccess() && shouldEnableAi(enableAi)) {
-            AiAnalyzeResult aiAnalyzeResult = openAiCompatibleBuildingAnalysisService.analyze(Paths.get(imagePath));
-            if (aiAnalyzeResult.isSuccess()) {
-                result.setAiAnalyze(aiAnalyzeResult.getContent());
+            AiStructuredAnalysisResult aiAnalysisResult =
+                    openAiCompatibleBuildingAnalysisService.analyzeStructured(Paths.get(imagePath));
+            result.setAiAnalysis(aiAnalysisResult.getAnalysis());
+            if (aiAnalysisResult.isSuccess()) {
+                result.setAiAnalyze(aiAnalysisResult.getRawContent());
             } else {
-                result.setMessage(result.getMessage() + "；AI解析失败: " + aiAnalyzeResult.getError());
+                result.setAiAnalyze(null);
+                result.setMessage(result.getMessage() + "；AI解析失败: " + aiAnalysisResult.getError());
             }
         }
 

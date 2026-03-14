@@ -33,6 +33,12 @@
 - 加载训练好的 MLP 模型
 - 输出二分类结果
 
+当前默认行为：
+
+- `/analyze` 主链路保留本地 19 维特征提取。
+- 结构化建筑语义解析走云端 OpenAI 兼容接口。
+- 本地训练 MLP 预测代码保留，但默认不参与主流程。
+
 ## 2. 代码结构
 
 ### Java 侧
@@ -49,9 +55,12 @@
 - `src/main/java/com/leeinx/acasb/service/PythonAnalysisClient.java`
   - 对 Python `/predict`、`/analyze` 做统一调用
 - `src/main/java/com/leeinx/acasb/service/OpenAiCompatibleBuildingAnalysisService.java`
-  - 调用 OpenAI 兼容 `chat/completions`
+  - 调用 OpenAI 兼容 `responses` / `chat/completions`
   - 组装图片为 base64 data URI
-  - 读取并返回模型原始文本输出
+  - 强制云端模型返回结构化建筑字段
+  - 同时保留原始文本输出
+- `src/main/java/com/leeinx/acasb/config/LocalModelProperties.java`
+  - 控制本地训练 MLP 预测是否启用
 - `src/main/java/com/leeinx/acasb/config/DatabaseInitializer.java`
   - 启动时建表
   - 为旧库补充 AI 相关列
@@ -80,8 +89,8 @@
 1. Java 接收文件上传或图片路径。
 2. 如果是上传文件，先写入 `app.temp-folder`。
 3. Java 调用 Python `/analyze` 提取传统图像特征。
-4. 若本次请求启用了 `enable_ai`，Java 再调用 OpenAI 兼容视觉接口。
-5. Java 合并结果，返回传统特征 + `ai_analyze`。
+4. 若本次请求启用了 `enable_ai`，Java 再调用云端 OpenAI 兼容视觉接口。
+5. Java 合并结果，返回传统特征 + `ai_analysis` + `ai_analyze`。
 6. 临时上传文件会在请求结束后删除。
 
 ### 3.2 `/data/add` 与 `/data/batch`
@@ -90,7 +99,7 @@
 2. 调用 Python `/analyze`。
 3. 如果启用 AI 解析，再调用 OpenAI 兼容视觉接口。
 4. 保存 `building_analysis` 记录。
-5. 再调用 Python `/predict` 保存 `building_type` 记录。
+5. 若 `local.model.prediction-enabled=true`，再调用 Python `/predict` 保存 `building_type` 记录。
 6. 返回分析 ID / 类型 ID / AI 原始输出文本。
 
 和 `/api/analyze` 的区别：
@@ -108,6 +117,7 @@
 |---|---|---|
 | `app.temp-folder` | `/api/analyze` 临时上传目录 | `./temp` |
 | `app.storage-folder` | `/data/*` 原图持久化目录 | `./uploads` |
+| `app.dataset-storage-folder` | `/api/dataset/*` 图片持久化目录 | `./dataset-storage` |
 
 ### 4.2 Python 服务
 
@@ -117,12 +127,20 @@
 | `python.service.host` | 主机 | `localhost` |
 | `python.service.port` | 端口 | `5000` |
 
-### 4.3 AI 建筑解析
+### 4.3 本地模型预测
+
+| 配置项 | 说明 | 默认值 |
+|---|---|---|
+| `local.model.prediction-enabled` | 是否启用本地训练 MLP 预测 | `false` |
+
+### 4.4 AI 建筑解析
 
 | 配置项 | 说明 | 默认值 |
 |---|---|---|
 | `ai.analysis.enabled` | 是否默认启用 AI 解析 | `false` |
 | `ai.analysis.base-url` | OpenAI 兼容服务地址 | `https://api.openai.com` |
+| `ai.analysis.api-interface` | `responses` / `chat` / `auto` | `responses` |
+| `ai.analysis.responses-path` | Responses 路径 | `/v1/responses` |
 | `ai.analysis.chat-completions-path` | Chat Completions 路径 | `/v1/chat/completions` |
 | `ai.analysis.api-key` | API Key | 空 |
 | `ai.analysis.model` | 模型名 | `gpt-4.1-mini` |
@@ -140,7 +158,13 @@
 
 ```json
 {
-  "ai_analyze": "推测为官式建筑，主体色彩以红色和黄色为主，风格偏明清官式。年代判断大致在明清时期，关键依据是礼制色彩、屋顶形制与中轴对称布局。"
+  "ai_analysis": {
+    "province_level_region": "北京市",
+    "dynasty_guess": "清",
+    "building_rank": "皇家",
+    "analysis_status": "success"
+  },
+  "ai_analyze": "{\"province_level_region\":\"北京市\",...}"
 }
 ```
 
@@ -175,6 +199,11 @@
 
 `analysis_id` 指向 `building_analysis.id`。
 
+说明：
+
+- 当 `local.model.prediction-enabled=false` 时，这张表不会新增记录。
+- 这表示系统仅保留本地特征和云端 AI 解析，不再使用本地训练分类模型。
+
 ## 7. 扩展建议
 
 ### 7.1 如果要扩展 AI 输出字段
@@ -182,10 +211,10 @@
 需要同步修改以下位置：
 
 1. `src/main/java/com/leeinx/acasb/dto/ImageFeatures.java`
-2. `src/main/java/com/leeinx/acasb/service/OpenAiCompatibleBuildingAnalysisService.java`
-3. `src/main/java/com/leeinx/acasb/controller/dataController.java`
-4. `src/main/java/com/leeinx/acasb/entity/BuildingAnalysis.java`
-5. `src/main/java/com/leeinx/acasb/config/DatabaseInitializer.java`
+2. `src/main/java/com/leeinx/acasb/dto/DatasetImageMetadata.java`
+3. `src/main/java/com/leeinx/acasb/service/OpenAiCompatibleBuildingAnalysisService.java`
+4. `src/main/java/com/leeinx/acasb/controller/ImageController.java`
+5. 如需持久化，再同步改 `BuildingAnalysis` / `DatabaseInitializer`
 
 ### 7.2 如果要替换 OpenAI 兼容网关
 

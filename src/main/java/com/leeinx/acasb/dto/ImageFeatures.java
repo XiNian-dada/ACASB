@@ -13,6 +13,9 @@ public class ImageFeatures {
 
     @JsonProperty("ai_analyze")
     private String aiAnalyze;
+
+    @JsonProperty("ai_analysis")
+    private DatasetImageMetadata aiAnalysis;
     
     @JsonProperty("ratio_yellow")
     private double ratioYellow;

@@ -29,7 +29,7 @@ def create_package_structure(project_root, temp_dir):
     shutil.copytree(analysis_source, analysis_dest, ignore=shutil.ignore_patterns('__pycache__'))
     print(f"复制 acasb-analysis 目录: {analysis_dest}")
     
-    for script in ["start_java.bat", "start_python.bat"]:
+    for script in ["start_java.bat", "start_python.bat", "start_java.command", "start_python.command"]:
         src = os.path.join(project_root, script)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(temp_dir, script))
@@ -73,11 +73,12 @@ def create_readme(temp_dir):
 - db.password: 数据库密码
 
 ### 2. 启动后端服务
-双击 start.bat 启动后端服务
+- Windows: 双击 start_java.bat
+- macOS: 双击 start_java.command
 
 ### 3. 启动 Python 服务
-进入 acasb-analysis 目录，运行：
-python api_server.py
+- Windows: 双击 start_python.bat
+- macOS: 双击 start_python.command
 
 ### 4. 访问前端
 双击 index.html 在浏览器中打开
@@ -94,7 +95,8 @@ python api_server.py
 ## 目录结构
 - ACASB.jar (后端 JAR 包)
 - config.properties (配置文件)
-- start.bat (启动脚本)
+- start_java.bat / start_python.bat (Windows 启动脚本)
+- start_java.command / start_python.command (macOS 启动脚本)
 - index.html (前端页面)
 - acasb-analysis/ (Python 分析代码)
 - datasets/ (数据集)

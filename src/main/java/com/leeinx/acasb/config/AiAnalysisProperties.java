@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 public class AiAnalysisProperties {
     private boolean enabled = false;
     private String baseUrl = "https://api.openai.com";
+    private String apiInterface = "responses";
+    private String responsesPath = "/v1/responses";
     private String chatCompletionsPath = "/v1/chat/completions";
     private String apiKey = "";
     private String model = "gpt-4.1-mini";
@@ -17,12 +19,20 @@ public class AiAnalysisProperties {
     private int maxTokens = 900;
 
     public String buildChatCompletionsUrl() {
+        return buildUrl(chatCompletionsPath);
+    }
+
+    public String buildResponsesUrl() {
+        return buildUrl(responsesPath);
+    }
+
+    private String buildUrl(String path) {
         String normalizedBaseUrl = baseUrl.endsWith("/")
                 ? baseUrl.substring(0, baseUrl.length() - 1)
                 : baseUrl;
-        String normalizedPath = chatCompletionsPath.startsWith("/")
-                ? chatCompletionsPath
-                : "/" + chatCompletionsPath;
+        String normalizedPath = path.startsWith("/")
+                ? path
+                : "/" + path;
         return normalizedBaseUrl + normalizedPath;
     }
 }

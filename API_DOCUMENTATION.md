@@ -7,7 +7,7 @@ Python 分析服务默认地址：`http://localhost:5000`
 说明：
 
 - Java 服务对外提供统一接口。
-- `/api/analyze` 在传统图像特征基础上，支持额外输出 `ai_analyze`。
+- `/api/analyze` 在传统图像特征基础上，支持额外输出 `ai_analysis` 和 `ai_analyze`。
 - 鉴权逻辑已预留，但当前默认关闭。
 
 ## 1. 接口总览
@@ -16,8 +16,8 @@ Python 分析服务默认地址：`http://localhost:5000`
 |---|---|---|
 | `GET` | `/api/health` | Java 健康检查 |
 | `GET` | `/api/test` | Java 图像接口测试 |
-| `POST` | `/api/predict` | 建筑二分类预测 |
-| `POST` | `/api/analyze` | 图像特征分析，可选 AI 解析 |
+| `POST` | `/api/predict` | 建筑二分类预测，默认关闭 |
+| `POST` | `/api/analyze` | 图像特征分析，保留 19 维特征并可附加云端 AI 解析 |
 | `POST` | `/data/add` | 单张图片入库 |
 | `POST` | `/data/batch` | 批量图片入库 |
 | `GET` | `/data/analysis/{id}` | 查询分析详情 |
@@ -48,11 +48,11 @@ Python 分析服务默认地址：`http://localhost:5000`
 
 行为：
 
-- 如果传 `enable_ai=true`，本次请求强制启用 AI 解析。
+- 如果传 `enable_ai=true`，本次请求强制启用云端 AI 解析。
 - 如果不传，按 `ai.analysis.enabled` 的全局配置决定。
 - AI 解析失败不会让传统图像特征提取失败，失败原因会追加到返回的 `message`。
 
-### 2.2 `ai_analyze` 字段
+### 2.2 `ai_analysis` 与 `ai_analyze`
 
 可能出现于：
 
@@ -64,12 +64,25 @@ Python 分析服务默认地址：`http://localhost:5000`
 字段含义：
 
 ```json
-"推测为官式建筑，主体颜色以红色与黄色为主，风格偏明清官式。年代判断大致在明清时期，依据包括礼制色彩、屋顶形制和中轴对称布局。"
+{
+  "ai_analysis": {
+    "province_level_region": "北京市",
+    "dynasty_guess": "清",
+    "building_rank": "皇家",
+    "analysis_status": "success"
+  },
+  "ai_analyze": "{\"province_level_region\":\"北京市\",...}"
+}
 ```
+
+- `ai_analysis` 是解析后的结构化建筑字段。
+- `ai_analyze` 是云端模型返回的原始文本，通常是 JSON 字符串。
 
 ## 3. `POST /api/predict`
 
 使用 Python MLP 模型判断图片更接近 `royal` 还是 `civilian`。
+
+默认情况下 `local.model.prediction-enabled=false`，此接口会直接返回“本地训练模型预测已禁用”。
 
 ### 请求
 
@@ -111,7 +124,7 @@ curl -X POST http://localhost:8080/api/predict \
 
 ## 4. `POST /api/analyze`
 
-分析图片并返回 19 维图像特征；可额外返回远程 AI 的原始文本解析结果。
+分析图片并返回 19 维图像特征；可额外返回云端 AI 的结构化解析结果和原始文本。
 
 支持两种请求方式。
 
@@ -168,7 +181,32 @@ curl -X POST http://localhost:8080/api/predict \
   "homogeneity": 0.4276,
   "asm": 0.055,
   "royal_ratio": 0.5714,
-  "ai_analyze": "推测为官式建筑，主体颜色以红色与黄色为主，风格偏明清官式。年代判断大致在明清时期。"
+  "ai_analysis": {
+    "province_level_region": "北京市",
+    "province_confidence": 0.82,
+    "dynasty_guess": "清",
+    "building_rank": "皇家",
+    "scene_type": "建筑外观",
+    "building_present": true,
+    "building_primary_colors": ["红色", "黄色", "灰色"],
+    "building_color_distribution": [
+      { "color": "红色", "ratio": 0.52 },
+      { "color": "黄色", "ratio": 0.28 },
+      { "color": "灰色", "ratio": 0.2 }
+    ],
+    "architecture_style": ["皇家官式古建"],
+    "scene_description": "画面主体为建筑外观中的近代以前传统建筑，建筑主体色彩分布为红色约占52%，黄色约占28%，灰色约占20%，朝代判断归入清，建筑等级归入皇家。",
+    "reasoning": [
+      "建筑主体颜色分布清楚，红色约占52%，黄色约占28%，灰色约占20%。",
+      "屋顶形制与礼制色彩组合明确，整体属于近代以前的皇家官式古建体系。"
+    ],
+    "needs_manual_review": false,
+    "file_name": "demo.jpg",
+    "relative_path": "demo.jpg",
+    "analysis_status": "success",
+    "error_message": ""
+  },
+  "ai_analyze": "{\"province_level_region\":\"北京市\",\"province_confidence\":0.82,...}"
 }
 ```
 
@@ -192,6 +230,8 @@ curl -X POST http://localhost:8080/api/predict \
 | `homogeneity` | GLCM 同质性 |
 | `asm` | GLCM 角二阶矩 |
 | `royal_ratio` | 皇家色彩占比，等于黄色 + 红色占比 |
+| `ai_analysis` | 云端 AI 结构化建筑解析结果 |
+| `ai_analyze` | 云端 AI 原始输出文本 |
 
 ### 示例
 
@@ -230,11 +270,15 @@ curl -X POST http://localhost:8080/api/analyze \
   "success": true,
   "message": "数据添加成功",
   "analysisId": 12,
-  "typeId": 12,
+  "typeId": null,
   "storedImagePath": "/abs/path/uploads/7c...a.jpg",
   "ai_analyze": "推测为官式建筑，主体颜色以红色与黄色为主。"
 }
 ```
+
+说明：
+
+- 当 `local.model.prediction-enabled=false` 时，`typeId` 会是 `null`。
 
 ### 示例
 

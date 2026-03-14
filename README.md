@@ -1,14 +1,18 @@
 # ACASB
 
-ACASB 是一个面向中国古建筑图像分析的双服务项目，使用 Spring Boot 负责 API、数据落库与流程编排，使用 FastAPI + OpenCV + scikit-learn 负责图像特征提取与二分类推理。
+ACASB 是一个面向中国古建筑图像分析的双服务项目，使用 Spring Boot 负责 API、数据落库与流程编排，使用 FastAPI + OpenCV + scikit-learn 负责图像特征提取与传统模型推理。
 
-当前版本在原有 19 维手工特征分析与皇家/民居预测基础上，新增了可选的 AI 建筑解析能力：`/api/analyze` 可以把图片发送到 OpenAI 兼容视觉接口，并把远程模型返回的原始文本放到 `ai_analyze` 字段中，和本地计算特征彻底分开。
+当前版本的主分析接口是“本地 19 维特征 + 云端 AI 结构化解析”组合：
+
+- `19` 维手工特征仍然由本地 Python 服务提取并直接返回。
+- 云端视觉模型额外输出 `ai_analysis` 结构化字段和 `ai_analyze` 原始文本。
+- 本地训练的 MLP 预测代码保留，但默认不参与主流程。
 
 ## 功能概览
 
-- 图像 19 维特征提取：颜色占比、HSV 统计量、边缘密度、熵值、 GLCM 纹理特征。
-- 建筑二分类预测：输出 `royal` / `civilian` 以及置信度。
-- AI 建筑解析：输出 `ai_analyze` 字段，原样保存远程模型的文本结果。
+- 图像 19 维特征提取：颜色占比、HSV 统计量、边缘密度、熵值、GLCM 纹理特征。
+- 云端 AI 建筑解析：输出 `ai_analysis` 结构化字段和 `ai_analyze` 原始文本。
+- 本地 MLP 二分类预测：代码保留，但默认关闭。
 - 数据持久化：`/data/add` 和 `/data/batch` 会把原图保存到 `app.storage-folder`，并把分析结果写入数据库。
 - 排序与筛选查询：支持按颜色、纹理、皇家比例等字段排序，并支持 `prediction` 过滤。
 
@@ -26,7 +30,7 @@ Spring Boot (:8080)
   |
   +--> FastAPI (:5000)
   |     - OpenCV 特征提取
-  |     - MLP 模型推理
+  |     - 传统 MLP 模型（默认不启用）
   |
   +--> MySQL / OceanBase
         - building_analysis
@@ -118,7 +122,7 @@ curl http://localhost:8080/testPython
 
 ## AI 建筑解析配置
 
-AI 解析默认关闭。只有在以下两种情况之一满足时才会调用 OpenAI 兼容接口：
+`/api/analyze` 会始终返回本地 19 维特征。云端 AI 解析部分默认关闭，只有在以下两种情况之一满足时才会调用 OpenAI 兼容接口：
 
 - 全局打开 `ai.analysis.enabled=true`
 - 单次请求显式传入 `enable_ai=true`
@@ -128,18 +132,23 @@ AI 解析默认关闭。只有在以下两种情况之一满足时才会调用 O
 ```properties
 ai.analysis.enabled=false
 ai.analysis.base-url=https://api.openai.com
+ai.analysis.api-interface=responses
+ai.analysis.responses-path=/v1/responses
 ai.analysis.chat-completions-path=/v1/chat/completions
 ai.analysis.api-key=sk-xxx
 ai.analysis.model=gpt-4.1-mini
 ai.analysis.temperature=0.2
 ai.analysis.max-tokens=900
+
+local.model.prediction-enabled=false
 ```
 
 说明：
 
-- 这里使用的是 OpenAI 兼容 `chat/completions` 协议，不依赖官方 SDK。
+- 这里支持 `responses`、`chat/completions`、`auto` 三种兼容模式，默认优先 `responses`。
 - 图片会以 `data:image/...;base64,...` 形式随请求发送。
 - AI 解析失败不会中断传统特征分析；接口会继续返回本地图像特征，并在 `message` 中附带 AI 失败原因。
+- `local.model.prediction-enabled=false` 表示本地训练的 MLP 预测默认关闭。
 
 ## 核心接口
 
@@ -168,7 +177,7 @@ curl -X POST http://localhost:8080/api/analyze \
   -d '{"image_path":"./uploads/demo.jpg","enable_ai":true}'
 ```
 
-成功响应会同时包含传统特征和可选的 `ai_analyze`：
+成功响应会同时包含传统特征，以及可选的 `ai_analysis` 和 `ai_analyze`：
 
 ```json
 {
@@ -177,7 +186,32 @@ curl -X POST http://localhost:8080/api/analyze \
   "ratio_yellow": 0.0508,
   "edge_density": 0.2024,
   "royal_ratio": 0.5714,
-  "ai_analyze": "推测为官式建筑，主体以红色墙柱和黄色瓦顶为主。建筑风格偏明清官式，年代判断大致在明清时期。关键依据包括中轴对称、礼制色彩和屋顶形制。"
+  "ai_analysis": {
+    "province_level_region": "北京市",
+    "province_confidence": 0.82,
+    "dynasty_guess": "清",
+    "building_rank": "皇家",
+    "scene_type": "建筑外观",
+    "building_present": true,
+    "building_primary_colors": ["红色", "黄色", "灰色"],
+    "building_color_distribution": [
+      { "color": "红色", "ratio": 0.52 },
+      { "color": "黄色", "ratio": 0.28 },
+      { "color": "灰色", "ratio": 0.20 }
+    ],
+    "architecture_style": ["皇家官式古建"],
+    "scene_description": "画面主体为建筑外观中的近代以前传统建筑，建筑主体色彩分布为红色约占52%，黄色约占28%，灰色约占20%，朝代判断归入清，建筑等级归入皇家。",
+    "reasoning": [
+      "建筑主体颜色分布清楚，红色约占52%，黄色约占28%，灰色约占20%。",
+      "屋顶形制与礼制色彩组合明确，整体属于近代以前的皇家官式古建体系。"
+    ],
+    "needs_manual_review": false,
+    "file_name": "example.jpg",
+    "relative_path": "example.jpg",
+    "analysis_status": "success",
+    "error_message": ""
+  },
+  "ai_analyze": "{\"province_level_region\":\"北京市\",\"province_confidence\":0.82,...}"
 }
 ```
 
