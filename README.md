@@ -2,13 +2,13 @@
 
 ACASB 是一个面向中国古建筑图像分析的双服务项目，使用 Spring Boot 负责 API、数据落库与流程编排，使用 FastAPI + OpenCV + scikit-learn 负责图像特征提取与二分类推理。
 
-当前版本在原有 19 维手工特征分析与皇家/民居预测基础上，新增了可选的 AI 建筑解析能力：`/api/analyze` 可以把图片发送到 OpenAI 兼容视觉接口，补充输出建筑类型、主色占比、风格、年代推断、屋顶形制、材料与摘要等结构化信息。
+当前版本在原有 19 维手工特征分析与皇家/民居预测基础上，新增了可选的 AI 建筑解析能力：`/api/analyze` 可以把图片发送到 OpenAI 兼容视觉接口，并把远程模型返回的原始文本放到 `ai_analyze` 字段中，和本地计算特征彻底分开。
 
 ## 功能概览
 
 - 图像 19 维特征提取：颜色占比、HSV 统计量、边缘密度、熵值、 GLCM 纹理特征。
 - 建筑二分类预测：输出 `royal` / `civilian` 以及置信度。
-- AI 建筑解析：输出 `ai_analysis` 字段，适合做更高层的语义判断。
+- AI 建筑解析：输出 `ai_analyze` 字段，原样保存远程模型的文本结果。
 - 数据持久化：`/data/add` 和 `/data/batch` 会把原图保存到 `app.storage-folder`，并把分析结果写入数据库。
 - 排序与筛选查询：支持按颜色、纹理、皇家比例等字段排序，并支持 `prediction` 过滤。
 
@@ -139,7 +139,7 @@ ai.analysis.max-tokens=900
 
 - 这里使用的是 OpenAI 兼容 `chat/completions` 协议，不依赖官方 SDK。
 - 图片会以 `data:image/...;base64,...` 形式随请求发送。
-- AI 解析失败不会中断传统特征分析，接口仍会返回原始图像特征；失败信息会写在 `ai_analysis.error`。
+- AI 解析失败不会中断传统特征分析；接口会继续返回本地图像特征，并在 `message` 中附带 AI 失败原因。
 
 ## 核心接口
 
@@ -168,7 +168,7 @@ curl -X POST http://localhost:8080/api/analyze \
   -d '{"image_path":"./uploads/demo.jpg","enable_ai":true}'
 ```
 
-成功响应会同时包含传统特征和可选的 `ai_analysis`：
+成功响应会同时包含传统特征和可选的 `ai_analyze`：
 
 ```json
 {
@@ -177,20 +177,7 @@ curl -X POST http://localhost:8080/api/analyze \
   "ratio_yellow": 0.0508,
   "edge_density": 0.2024,
   "royal_ratio": 0.5714,
-  "ai_analysis": {
-    "enabled": true,
-    "success": true,
-    "provider": "openai-compatible",
-    "model": "gpt-4.1-mini",
-    "building_type": "宫殿式官式建筑",
-    "style": "明清官式风格",
-    "estimated_era": "明清",
-    "dominant_colors": [
-      {"name": "red", "ratio": 0.45, "description": "柱墙与大面积立面"},
-      {"name": "yellow", "ratio": 0.30, "description": "屋顶瓦面"}
-    ],
-    "summary": "整体呈现典型官式建筑色彩与屋顶形制特征。"
-  }
+  "ai_analyze": "推测为官式建筑，主体以红色墙柱和黄色瓦顶为主。建筑风格偏明清官式，年代判断大致在明清时期。关键依据包括中轴对称、礼制色彩和屋顶形制。"
 }
 ```
 
@@ -213,17 +200,87 @@ curl -X POST "http://localhost:8080/data/batch?enable_ai=true" \
 
 `/data/*` 接口会把原图保存到 `app.storage-folder`，数据库中保存的是持久化路径，不再是会被删除的临时文件路径。
 
+## 高质量标注数据导入
+
+这套比赛数据的真实结构是：
+
+- 区域目录
+- 同目录图片文件
+- 同目录 `analysis.json`
+
+例如：
+
+```text
+计算机设计大赛/
+├── 华北地区/
+│   ├── 1.jpg
+│   ├── 2.jpg
+│   └── analysis.json
+├── 中南地区/
+│   ├── 1.jpg
+│   └── analysis.json
+```
+
+系统已新增一套基于真实数据字段的导入接口，路径统一使用 `/api/dataset/*`。
+
+### 1. 直接导入当前工作区的比赛目录
+
+如果服务端本机已经有 `计算机设计大赛` 目录，可以直接导入：
+
+```bash
+curl -X POST http://localhost:8080/api/dataset/import-folder \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+也可以显式指定路径：
+
+```bash
+curl -X POST http://localhost:8080/api/dataset/import-folder \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_path":"./计算机设计大赛","copy_images":true}'
+```
+
+### 2. 上传一个区域文件夹对应的 manifest 和图片
+
+适合远程上传：
+
+```bash
+curl -X POST http://localhost:8080/api/dataset/upload-manifest \
+  -F "manifest=@./计算机设计大赛/中南地区/analysis.json" \
+  -F "images=@./计算机设计大赛/中南地区/1.jpg" \
+  -F "images=@./计算机设计大赛/中南地区/2.jpg" \
+  -F "dataset_name=competition-dataset"
+```
+
+服务端会根据 manifest 中的 `file_name` 匹配上传的图片数组。
+
+### 3. 上传单张图片和对应 JSON
+
+```bash
+curl -X POST http://localhost:8080/api/dataset/upload-record \
+  -F "file=@./1.jpg" \
+  -F "metadata_file=@./one-record.json" \
+  -F "dataset_name=competition-dataset" \
+  -F "group_name=中南地区" \
+  -F "group_relative_path=中南地区"
+```
+
+### 4. 路径规范
+
+- 服务端落盘路径已自动转换为 ASCII 规范路径，避免中文目录影响上传和部署。
+- 接口返回中：
+  - `relativePath` / `groupRelativePath` 是 ASCII 规范路径
+  - `originalRelativePath` / `originalGroupRelativePath` 保留原始中文路径
+- 数据库存的是结构化元数据和原始单图 JSON，不存图片二进制。
+
 ## 数据表
 
 ### `building_analysis`
 
 除原有 19 维特征字段外，新增以下 AI 相关字段：
 
-- `ai_building_type`
-- `ai_style`
-- `ai_estimated_era`
-- `ai_summary`
-- `ai_analysis_json`
+- `ai_analyze`
 
 应用启动时会自动执行建表，并尝试为旧表补齐新增列。
 

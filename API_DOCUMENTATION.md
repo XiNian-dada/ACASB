@@ -7,7 +7,7 @@ Python 分析服务默认地址：`http://localhost:5000`
 说明：
 
 - Java 服务对外提供统一接口。
-- `/api/analyze` 在传统图像特征基础上，支持额外输出 `ai_analysis`。
+- `/api/analyze` 在传统图像特征基础上，支持额外输出 `ai_analyze`。
 - 鉴权逻辑已预留，但当前默认关闭。
 
 ## 1. 接口总览
@@ -24,6 +24,17 @@ Python 分析服务默认地址：`http://localhost:5000`
 | `GET` | `/data/type/{id}` | 查询预测详情 |
 | `GET` | `/data/list` | 排序查询分析记录 |
 | `GET` | `/testPython` | 透传 Python 健康检查 |
+| `POST` | `/api/dataset/import-folder` | 导入本机目录中的高质量标注数据 |
+| `POST` | `/api/dataset/import-manifest` | 导入指定 manifest 文件 |
+| `POST` | `/api/dataset/upload-manifest` | 上传一个 manifest 和对应图片数组 |
+| `POST` | `/api/dataset/upload-record` | 上传单张图片和对应 JSON |
+| `GET` | `/api/dataset/records` | 查询高质量标注记录 |
+| `GET` | `/api/dataset/records/{id}` | 查询单条高质量标注记录 |
+| `GET` | `/api/dataset/stats/overview` | 汇总统计 |
+| `GET` | `/api/dataset/stats/regions` | 省级区域统计 |
+| `GET` | `/api/dataset/stats/colors` | 核心色彩聚合统计 |
+| `GET` | `/api/dataset/stats/ranks` | 建筑等级统计 |
+| `GET` | `/api/dataset/stats/styles` | 建筑风格统计 |
 
 ## 2. 通用说明
 
@@ -39,9 +50,9 @@ Python 分析服务默认地址：`http://localhost:5000`
 
 - 如果传 `enable_ai=true`，本次请求强制启用 AI 解析。
 - 如果不传，按 `ai.analysis.enabled` 的全局配置决定。
-- AI 解析失败不会让传统图像特征提取失败，错误会落在 `ai_analysis.error`。
+- AI 解析失败不会让传统图像特征提取失败，失败原因会追加到返回的 `message`。
 
-### 2.2 `ai_analysis` 字段
+### 2.2 `ai_analyze` 字段
 
 可能出现于：
 
@@ -50,41 +61,10 @@ Python 分析服务默认地址：`http://localhost:5000`
 - `/data/analysis/{id}`
 - `/data/list`
 
-结构示例：
+字段含义：
 
 ```json
-{
-  "enabled": true,
-  "success": true,
-  "provider": "openai-compatible",
-  "model": "gpt-4.1-mini",
-  "building_type": "宫殿式官式建筑",
-  "building_type_confidence": 0.86,
-  "style": "明清官式风格",
-  "style_confidence": 0.8,
-  "estimated_era": "明清",
-  "estimated_era_reasoning": "红墙黄瓦与礼制化屋顶明显",
-  "roof_type": "歇山顶",
-  "main_materials": ["木构", "琉璃瓦"],
-  "dominant_colors": [
-    {"name": "red", "ratio": 0.45, "description": "墙柱立面"},
-    {"name": "yellow", "ratio": 0.3, "description": "屋顶瓦面"}
-  ],
-  "key_features": ["红墙黄瓦", "高台基", "中轴对称"],
-  "summary": "整体接近明清官式建筑。"
-}
-```
-
-失败示例：
-
-```json
-{
-  "enabled": true,
-  "success": false,
-  "provider": "openai-compatible",
-  "model": "gpt-4.1-mini",
-  "error": "AI analysis is enabled but ai.analysis.api-key is empty"
-}
+"推测为官式建筑，主体颜色以红色与黄色为主，风格偏明清官式。年代判断大致在明清时期，依据包括礼制色彩、屋顶形制和中轴对称布局。"
 ```
 
 ## 3. `POST /api/predict`
@@ -131,7 +111,7 @@ curl -X POST http://localhost:8080/api/predict \
 
 ## 4. `POST /api/analyze`
 
-分析图片并返回 19 维图像特征；可额外返回 AI 建筑解析结果。
+分析图片并返回 19 维图像特征；可额外返回远程 AI 的原始文本解析结果。
 
 支持两种请求方式。
 
@@ -188,13 +168,7 @@ curl -X POST http://localhost:8080/api/predict \
   "homogeneity": 0.4276,
   "asm": 0.055,
   "royal_ratio": 0.5714,
-  "ai_analysis": {
-    "enabled": true,
-    "success": true,
-    "building_type": "宫殿式官式建筑",
-    "style": "明清官式风格",
-    "estimated_era": "明清"
-  }
+  "ai_analyze": "推测为官式建筑，主体颜色以红色与黄色为主，风格偏明清官式。年代判断大致在明清时期。"
 }
 ```
 
@@ -258,11 +232,7 @@ curl -X POST http://localhost:8080/api/analyze \
   "analysisId": 12,
   "typeId": 12,
   "storedImagePath": "/abs/path/uploads/7c...a.jpg",
-  "aiAnalysis": {
-    "enabled": true,
-    "success": true,
-    "building_type": "官式建筑"
-  }
+  "ai_analyze": "推测为官式建筑，主体颜色以红色与黄色为主。"
 }
 ```
 
@@ -315,7 +285,7 @@ curl -X POST "http://localhost:8080/data/batch?enable_ai=true" \
 
 ## 7. `GET /data/analysis/{id}`
 
-查询分析详情。除了传统特征外，还会返回入库时保存的 AI 解析摘要与 `aiAnalysis`。
+查询分析详情。除了传统特征外，还会返回入库时保存的 `ai_analyze` 原始文本。
 
 ### 示例
 
@@ -332,14 +302,7 @@ curl http://localhost:8080/data/analysis/12
     "id": 12,
     "imagePath": "/abs/path/uploads/7c...a.jpg",
     "royalRatio": 0.57,
-    "aiBuildingType": "官式建筑",
-    "aiStyle": "明清官式风格",
-    "aiEstimatedEra": "明清",
-    "aiSummary": "整体接近明清官式建筑。",
-    "aiAnalysis": {
-      "enabled": true,
-      "success": true
-    }
+    "ai_analyze": "推测为官式建筑，风格偏明清官式，年代判断大致在明清时期。"
   }
 }
 ```
@@ -435,12 +398,7 @@ curl "http://localhost:8080/data/list?field=royalRatio&order=desc&prediction=roy
       "prediction": "royal",
       "confidence": 0.91,
       "royalRatio": 0.57,
-      "aiBuildingType": "官式建筑",
-      "aiSummary": "整体接近明清官式建筑。",
-      "aiAnalysis": {
-        "enabled": true,
-        "success": true
-      }
+      "ai_analyze": "推测为官式建筑，风格偏明清官式。"
     }
   ]
 }
@@ -460,7 +418,135 @@ curl http://localhost:8080/api/health
 curl http://localhost:8080/testPython
 ```
 
-## 11. 常见错误
+## 11. 高质量标注数据接口
+
+这批真实数据的字段核心是：
+
+- `province_level_region`
+- `dynasty_guess`
+- `building_rank`
+- `scene_type`
+- `building_primary_colors`
+- `building_color_distribution`
+- `architecture_style`
+- `scene_description`
+- `reasoning`
+- `needs_manual_review`
+
+### `POST /api/dataset/import-folder`
+
+导入服务端本机已有的数据目录。默认会导入当前工作区下的 `计算机设计大赛`。
+
+请求体：
+
+```json
+{
+  "dataset_path": "./计算机设计大赛",
+  "dataset_name": "competition-dataset",
+  "copy_images": true
+}
+```
+
+说明：
+
+- `copy_images=true` 时，图片会复制到 `app.dataset-storage-folder`
+- 服务端会自动把中文目录转换成 ASCII 规范路径
+
+### `POST /api/dataset/upload-manifest`
+
+`Content-Type: multipart/form-data`
+
+参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `manifest` | file | 是 | 区域目录中的 `analysis.json` |
+| `images` | file[] | 是 | manifest 中引用的图片文件 |
+| `dataset_name` | string | 否 | 数据集名称 |
+
+### `POST /api/dataset/upload-record`
+
+`Content-Type: multipart/form-data`
+
+参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | file | 是 | 图片文件 |
+| `metadata` | string | 否 | 单图 JSON 字符串 |
+| `metadata_file` | file | 否 | 单图 JSON 文件 |
+| `dataset_name` | string | 否 | 数据集名称 |
+| `group_name` | string | 否 | 组中文名称 |
+| `group_relative_path` | string | 否 | 原始组路径 |
+
+说明：`metadata` 和 `metadata_file` 二选一。
+
+### `GET /api/dataset/records`
+
+查询参数：
+
+| 参数 | 说明 |
+|---|---|
+| `datasetName` | 数据集名称 |
+| `groupName` | 区域组名称，如 `中南地区` |
+| `dynasty` | 朝代，如 `清` |
+| `province` | 省级区域，如 `湖北省` |
+| `rank` | 建筑等级，如 `皇家`、`官员`、`平民` |
+| `sceneType` | 场景类型，如 `建筑外观`、`建筑群` |
+| `manualReview` | 是否需人工复核 |
+| `analysisStatus` | 分析状态 |
+| `keyword` | 描述/风格/路径模糊搜索 |
+| `limit` | 返回数量，默认 20 |
+| `offset` | 偏移量，默认 0 |
+
+返回中的路径字段说明：
+
+- `relativePath` / `groupRelativePath`：ASCII 规范路径
+- `originalRelativePath` / `originalGroupRelativePath`：原始中文路径
+
+### `GET /api/dataset/stats/overview`
+
+返回当前筛选条件下的：
+
+- 总记录数
+- 成功记录数
+- 人工复核数
+- 朝代分布
+- 等级分布
+- 场景分布
+- 省级区域分布
+- 区域组分布
+
+### `GET /api/dataset/stats/regions`
+
+返回按 `province_level_region` 聚合后的：
+
+- 记录数
+- 人工复核数
+- 平均区域置信度
+
+### `GET /api/dataset/stats/colors`
+
+基于 `building_color_distribution` 聚合颜色统计，返回：
+
+- `name`
+- `imageCount`
+- `totalRatio`
+- `averageRatio`
+
+### `GET /api/dataset/stats/ranks`
+
+返回实际数据中的建筑等级统计，目前基于真实数据只会出现：
+
+- `皇家`
+- `官员`
+- `平民`
+
+### `GET /api/dataset/stats/styles`
+
+基于 `architecture_style` 聚合出现频次，便于后续做风格标签云和风格分布图。
+
+## 12. 常见错误
 
 ### 图片路径不存在
 
@@ -474,7 +560,7 @@ curl http://localhost:8080/testPython
 
 ### AI 解析未配置
 
-如果 `enable_ai=true`，但未配置 `ai.analysis.api-key`，会在 `ai_analysis.error` 中得到错误信息。
+如果 `enable_ai=true`，但未配置 `ai.analysis.api-key`，接口仍会成功返回本地特征，但 `message` 会附带 AI 失败原因。
 
 ### Python 模型不存在
 

@@ -77,20 +77,8 @@ public class BuildingAnalysis {
     @TableField("royal_ratio")
     private Double royalRatio;
 
-    @TableField("ai_building_type")
-    private String aiBuildingType;
-
-    @TableField("ai_style")
-    private String aiStyle;
-
-    @TableField("ai_estimated_era")
-    private String aiEstimatedEra;
-
-    @TableField("ai_summary")
-    private String aiSummary;
-
-    @TableField("ai_analysis_json")
-    private String aiAnalysisJson;
+    @TableField("ai_analyze")
+    private String aiAnalyze;
     
     @TableField("create_time")
     private LocalDateTime createTime;

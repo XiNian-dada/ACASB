@@ -1,6 +1,7 @@
 package com.leeinx.acasb.controller;
 
 import com.leeinx.acasb.PredictionRequest;
+import com.leeinx.acasb.dto.AiAnalyzeResult;
 import com.leeinx.acasb.dto.AnalyzeRequest;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
 import com.leeinx.acasb.dto.ImageFeatures;
@@ -127,7 +128,12 @@ public class ImageController {
         }
 
         if (result.isSuccess() && shouldEnableAi(enableAi)) {
-            result.setAiAnalysis(openAiCompatibleBuildingAnalysisService.analyze(Paths.get(imagePath)));
+            AiAnalyzeResult aiAnalyzeResult = openAiCompatibleBuildingAnalysisService.analyze(Paths.get(imagePath));
+            if (aiAnalyzeResult.isSuccess()) {
+                result.setAiAnalyze(aiAnalyzeResult.getContent());
+            } else {
+                result.setMessage(result.getMessage() + "；AI解析失败: " + aiAnalyzeResult.getError());
+            }
         }
 
         return result;

@@ -1,8 +1,6 @@
 package com.leeinx.acasb.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.leeinx.acasb.dto.AiBuildingAnalysis;
+import com.leeinx.acasb.dto.AiAnalyzeResult;
 import com.leeinx.acasb.dto.BatchUploadResult;
 import com.leeinx.acasb.dto.ImageAnalysisResult;
 import com.leeinx.acasb.dto.ImageFeatures;
@@ -36,19 +34,16 @@ public class dataController {
     private final BuildingAnalysisService buildingAnalysisService;
     private final BuildingTypeService buildingTypeService;
     private final OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService;
-    private final ObjectMapper objectMapper;
 
     public dataController(
             PythonAnalysisClient pythonAnalysisClient,
             BuildingAnalysisService buildingAnalysisService,
             BuildingTypeService buildingTypeService,
-            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService,
-            ObjectMapper objectMapper) {
+            OpenAiCompatibleBuildingAnalysisService openAiCompatibleBuildingAnalysisService) {
         this.pythonAnalysisClient = pythonAnalysisClient;
         this.buildingAnalysisService = buildingAnalysisService;
         this.buildingTypeService = buildingTypeService;
         this.openAiCompatibleBuildingAnalysisService = openAiCompatibleBuildingAnalysisService;
-        this.objectMapper = objectMapper;
     }
 
     @Value("${app.storage-folder:./uploads}")
@@ -69,7 +64,7 @@ public class dataController {
             result.put("analysisId", processedImageData.savedAnalysis().getId());
             result.put("typeId", processedImageData.savedType() != null ? processedImageData.savedType().getId() : null);
             result.put("storedImagePath", storedPath.toString());
-            result.put("aiAnalysis", processedImageData.imageFeatures().getAiAnalysis());
+            result.put("ai_analyze", processedImageData.imageFeatures().getAiAnalyze());
         } catch (Exception e) {
             result.put("success", false);
             result.put("message", "处理失败: " + e.getMessage());
@@ -206,7 +201,10 @@ public class dataController {
         }
 
         if (shouldEnableAi(enableAi)) {
-            imageFeatures.setAiAnalysis(openAiCompatibleBuildingAnalysisService.analyze(storedPath));
+            AiAnalyzeResult aiAnalyzeResult = openAiCompatibleBuildingAnalysisService.analyze(storedPath);
+            if (aiAnalyzeResult.isSuccess()) {
+                imageFeatures.setAiAnalyze(aiAnalyzeResult.getContent());
+            }
         }
 
         BuildingAnalysis analysis = buildAnalysisEntity(storedPath.toString(), imageFeatures);
@@ -249,15 +247,7 @@ public class dataController {
         analysis.setHomogeneity(imageFeatures.getHomogeneity());
         analysis.setAsm(imageFeatures.getAsm());
         analysis.setRoyalRatio(imageFeatures.getRoyalRatio());
-
-        AiBuildingAnalysis aiAnalysis = imageFeatures.getAiAnalysis();
-        if (aiAnalysis != null) {
-            analysis.setAiBuildingType(aiAnalysis.getBuildingType());
-            analysis.setAiStyle(aiAnalysis.getStyle());
-            analysis.setAiEstimatedEra(aiAnalysis.getEstimatedEra());
-            analysis.setAiSummary(aiAnalysis.getSummary());
-            analysis.setAiAnalysisJson(serializeAiAnalysis(aiAnalysis));
-        }
+        analysis.setAiAnalyze(imageFeatures.getAiAnalyze());
 
         return analysis;
     }
@@ -283,26 +273,6 @@ public class dataController {
 
     private boolean shouldEnableAi(Boolean enableAi) {
         return enableAi != null ? enableAi : openAiCompatibleBuildingAnalysisService.isEnabledByDefault();
-    }
-
-    private String serializeAiAnalysis(AiBuildingAnalysis aiAnalysis) {
-        try {
-            return objectMapper.writeValueAsString(aiAnalysis);
-        } catch (JsonProcessingException e) {
-            return null;
-        }
-    }
-
-    private AiBuildingAnalysis deserializeAiAnalysis(String json) {
-        if (!StringUtils.hasText(json)) {
-            return null;
-        }
-
-        try {
-            return objectMapper.readValue(json, AiBuildingAnalysis.class);
-        } catch (JsonProcessingException e) {
-            return AiBuildingAnalysis.failed("stored-json", null, "AI 解析结果反序列化失败: " + e.getMessage());
-        }
     }
 
     private Map<String, Object> buildAnalysisResponseItem(BuildingAnalysis analysis) {
@@ -333,11 +303,7 @@ public class dataController {
         item.put("homogeneity", analysis.getHomogeneity());
         item.put("asm", analysis.getAsm());
         item.put("royalRatio", analysis.getRoyalRatio());
-        item.put("aiBuildingType", analysis.getAiBuildingType());
-        item.put("aiStyle", analysis.getAiStyle());
-        item.put("aiEstimatedEra", analysis.getAiEstimatedEra());
-        item.put("aiSummary", analysis.getAiSummary());
-        item.put("aiAnalysis", deserializeAiAnalysis(analysis.getAiAnalysisJson()));
+        item.put("ai_analyze", analysis.getAiAnalyze());
         item.put("createTime", analysis.getCreateTime());
         item.put("updateTime", analysis.getUpdateTime());
 

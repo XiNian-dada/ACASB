@@ -3,7 +3,7 @@ package com.leeinx.acasb.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leeinx.acasb.config.AiAnalysisProperties;
-import com.leeinx.acasb.dto.AiBuildingAnalysis;
+import com.leeinx.acasb.dto.AiAnalyzeResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
@@ -43,9 +43,9 @@ public class OpenAiCompatibleBuildingAnalysisService {
         return aiAnalysisProperties.isEnabled();
     }
 
-    public AiBuildingAnalysis analyze(Path imagePath) {
+    public AiAnalyzeResult analyze(Path imagePath) {
         if (!StringUtils.hasText(aiAnalysisProperties.getApiKey())) {
-            return AiBuildingAnalysis.failed(
+            return AiAnalyzeResult.failed(
                     PROVIDER_NAME,
                     aiAnalysisProperties.getModel(),
                     "AI analysis is enabled but ai.analysis.api-key is empty"
@@ -65,8 +65,8 @@ public class OpenAiCompatibleBuildingAnalysisService {
                                     "role", "system",
                                     "content",
                                     "You are an expert in Chinese architectural visual analysis. " +
-                                            "Return only a valid JSON object with concise, evidence-based guesses. " +
-                                            "If a field is uncertain, say unknown instead of fabricating certainty."
+                                            "Give a concise, evidence-based answer in Chinese. " +
+                                            "If uncertain, explicitly say it is a guess."
                             ),
                             Map.of(
                                     "role", "user",
@@ -75,30 +75,19 @@ public class OpenAiCompatibleBuildingAnalysisService {
                                                     "type", "text",
                                                     "text",
                                                     """
-                                                    Analyze the uploaded building image and return exactly one JSON object.
-                                                    Required JSON schema:
-                                                    {
-                                                      "building_type": "building category guess",
-                                                      "building_type_confidence": 0.0,
-                                                      "style": "architectural style guess",
-                                                      "style_confidence": 0.0,
-                                                      "estimated_era": "estimated historical era",
-                                                      "estimated_era_reasoning": "why you inferred this era",
-                                                      "roof_type": "roof form or unknown",
-                                                      "main_materials": ["material 1", "material 2"],
-                                                      "dominant_colors": [
-                                                        {"name": "red", "ratio": 0.45, "description": "where it appears"}
-                                                      ],
-                                                      "key_features": ["feature 1", "feature 2"],
-                                                      "summary": "short summary in Chinese"
-                                                    }
+                                                    Analyze the uploaded building image.
+                                                    Please describe it in Chinese and cover these points:
+                                                    1. 建筑类型推断
+                                                    2. 建筑主体可见颜色及大致占比
+                                                    3. 建筑风格推断
+                                                    4. 年代或时期推断
+                                                    5. 你做出判断的关键建筑特征
                                                     
                                                     Requirements:
-                                                    - Focus on traditional East Asian / Chinese architecture cues if relevant.
-                                                    - Estimate visible dominant color ratios from the building facade or main visible structure, not the full background.
-                                                    - Ratios should be between 0 and 1 and roughly sum to 1 across dominant_colors.
-                                                    - Keep the answer concise and factual.
-                                                    - Do not wrap the JSON in markdown.
+                                                    - You may answer in plain text or JSON.
+                                                    - Do not use markdown code fences.
+                                                    - Focus on the main building body, not the full background.
+                                                    - Keep it concise, factual, and easy to display directly in an API response.
                                                     """
                                             ),
                                             Map.of(
@@ -121,17 +110,14 @@ public class OpenAiCompatibleBuildingAnalysisService {
             );
 
             String content = extractAssistantContent(response.getBody());
-            String jsonPayload = unwrapJson(content);
-            AiBuildingAnalysis analysis = objectMapper.readValue(jsonPayload, AiBuildingAnalysis.class);
-            analysis.setEnabled(true);
-            analysis.setSuccess(true);
-            analysis.setProvider(PROVIDER_NAME);
-            analysis.setModel(aiAnalysisProperties.getModel());
-            analysis.setError(null);
-            return analysis;
+            return AiAnalyzeResult.success(
+                    PROVIDER_NAME,
+                    aiAnalysisProperties.getModel(),
+                    sanitizeOutput(content)
+            );
         } catch (Exception e) {
             logger.warn("AI building analysis failed for {}: {}", imagePath, e.getMessage());
-            return AiBuildingAnalysis.failed(PROVIDER_NAME, aiAnalysisProperties.getModel(), e.getMessage());
+            return AiAnalyzeResult.failed(PROVIDER_NAME, aiAnalysisProperties.getModel(), e.getMessage());
         }
     }
 
@@ -177,20 +163,12 @@ public class OpenAiCompatibleBuildingAnalysisService {
         throw new IOException("Unsupported AI response format: missing choices[0].message.content");
     }
 
-    private String unwrapJson(String rawContent) {
+    private String sanitizeOutput(String rawContent) {
         String trimmed = rawContent == null ? "" : rawContent.trim();
-
         if (trimmed.startsWith("```")) {
             trimmed = trimmed.replaceFirst("^```(?:json)?\\s*", "");
             trimmed = trimmed.replaceFirst("\\s*```$", "");
         }
-
-        int firstBrace = trimmed.indexOf('{');
-        int lastBrace = trimmed.lastIndexOf('}');
-        if (firstBrace >= 0 && lastBrace > firstBrace) {
-            return trimmed.substring(firstBrace, lastBrace + 1);
-        }
-
         return trimmed;
     }
 }

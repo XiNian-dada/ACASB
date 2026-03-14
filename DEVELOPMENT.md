@@ -51,7 +51,7 @@
 - `src/main/java/com/leeinx/acasb/service/OpenAiCompatibleBuildingAnalysisService.java`
   - 调用 OpenAI 兼容 `chat/completions`
   - 组装图片为 base64 data URI
-  - 解析结构化 JSON 响应
+  - 读取并返回模型原始文本输出
 - `src/main/java/com/leeinx/acasb/config/DatabaseInitializer.java`
   - 启动时建表
   - 为旧库补充 AI 相关列
@@ -81,7 +81,7 @@
 2. 如果是上传文件，先写入 `app.temp-folder`。
 3. Java 调用 Python `/analyze` 提取传统图像特征。
 4. 若本次请求启用了 `enable_ai`，Java 再调用 OpenAI 兼容视觉接口。
-5. Java 合并结果，返回传统特征 + `ai_analysis`。
+5. Java 合并结果，返回传统特征 + `ai_analyze`。
 6. 临时上传文件会在请求结束后删除。
 
 ### 3.2 `/data/add` 与 `/data/batch`
@@ -91,7 +91,7 @@
 3. 如果启用 AI 解析，再调用 OpenAI 兼容视觉接口。
 4. 保存 `building_analysis` 记录。
 5. 再调用 Python `/predict` 保存 `building_type` 记录。
-6. 返回分析 ID / 类型 ID / AI 解析结果摘要。
+6. 返回分析 ID / 类型 ID / AI 原始输出文本。
 
 和 `/api/analyze` 的区别：
 
@@ -140,40 +140,15 @@
 
 ```json
 {
-  "ai_analysis": {
-    "enabled": true,
-    "success": true,
-    "provider": "openai-compatible",
-    "model": "gpt-4.1-mini",
-    "building_type": "宫殿式官式建筑",
-    "building_type_confidence": 0.86,
-    "style": "明清官式风格",
-    "style_confidence": 0.8,
-    "estimated_era": "明清",
-    "estimated_era_reasoning": "红墙黄瓦、重檐屋顶与礼制色彩明显",
-    "roof_type": "歇山顶",
-    "main_materials": ["木构", "琉璃瓦"],
-    "dominant_colors": [
-      {"name": "red", "ratio": 0.45, "description": "柱墙与立面"},
-      {"name": "yellow", "ratio": 0.3, "description": "屋顶瓦面"}
-    ],
-    "key_features": ["中轴对称", "高台基", "彩画构件"],
-    "summary": "整体接近明清官式建筑特征。"
-  }
+  "ai_analyze": "推测为官式建筑，主体色彩以红色和黄色为主，风格偏明清官式。年代判断大致在明清时期，关键依据是礼制色彩、屋顶形制与中轴对称布局。"
 }
 ```
 
-失败时不会抛弃整次分析，只会返回：
+失败时不会抛弃整次分析。接口会继续返回本地特征，并在 `message` 中追加 AI 失败信息，例如：
 
 ```json
 {
-  "ai_analysis": {
-    "enabled": true,
-    "success": false,
-    "provider": "openai-compatible",
-    "model": "gpt-4.1-mini",
-    "error": "AI analysis is enabled but ai.analysis.api-key is empty"
-  }
+  "message": "图像分析完成；AI解析失败: AI analysis is enabled but ai.analysis.api-key is empty"
 }
 ```
 
@@ -185,16 +160,12 @@
 
 - 传统特征字段：`ratio_*`、`h_*`、`s_*`、`v_*`、`edge_density`、`entropy`、`contrast`、`dissimilarity`、`homogeneity`、`asm`、`royal_ratio`
 - AI 字段：
-  - `ai_building_type`
-  - `ai_style`
-  - `ai_estimated_era`
-  - `ai_summary`
-  - `ai_analysis_json`
+  - `ai_analyze`
 
 说明：
 
-- `ai_analysis_json` 存完整结构化结果，便于后续重算或前端直接展示。
-- 其余四个字段是从结构化 JSON 中提炼出的高频字段，便于列表页与 SQL 查询。
+- `ai_analyze` 存远程模型返回的原始文本，不要求固定 JSON。
+- 本地计算特征和远程 AI 文本解释在接口层完全分开。
 
 ### 6.2 `building_type`
 
@@ -210,7 +181,7 @@
 
 需要同步修改以下位置：
 
-1. `src/main/java/com/leeinx/acasb/dto/AiBuildingAnalysis.java`
+1. `src/main/java/com/leeinx/acasb/dto/ImageFeatures.java`
 2. `src/main/java/com/leeinx/acasb/service/OpenAiCompatibleBuildingAnalysisService.java`
 3. `src/main/java/com/leeinx/acasb/controller/dataController.java`
 4. `src/main/java/com/leeinx/acasb/entity/BuildingAnalysis.java`
@@ -292,6 +263,44 @@ ai.analysis.model=your-vision-model
 - 直接请求 `http://localhost:5000/health`
 - 用固定图片路径请求 `/analyze` 和 `/predict`
 - 检查模型文件是否存在于 `acasb-analysis/models/`
+
+## 11. 高质量标注数据导入设计
+
+这套比赛数据不是传统的“只传图像”模式，而是：
+
+1. 图片文件
+2. `analysis.json` 中的高质量结构化描述
+
+因此新增了一张专门的数据表：
+
+- `dataset_image_record`
+
+其设计原则是：
+
+- 图片仍保存在文件系统
+- 数据库存储结构化字段和原始单图 JSON
+- 路径字段分为两套：
+  - `relative_path` / `group_relative_path`：ASCII 规范路径
+  - `original_relative_path` / `original_group_relative_path`：原始中文路径
+
+新增的核心接口：
+
+- `/api/dataset/import-folder`
+- `/api/dataset/import-manifest`
+- `/api/dataset/upload-manifest`
+- `/api/dataset/upload-record`
+- `/api/dataset/records`
+- `/api/dataset/stats/overview`
+- `/api/dataset/stats/regions`
+- `/api/dataset/stats/colors`
+- `/api/dataset/stats/ranks`
+- `/api/dataset/stats/styles`
+
+为什么这样设计：
+
+- 真实数据已经包含高质量的 `dynasty_guess`、`building_rank`、`province_level_region`、`architecture_style` 等字段
+- 后续大屏接口应直接建立在这些真实字段上，而不是重新虚构一套不落地的数据模型
+- 中文目录对上传和跨平台部署不稳定，所以落盘时统一转成 ASCII
 
 ## 11. 测试与验证
 

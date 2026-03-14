@@ -16,6 +16,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         createBuildingAnalysisTable();
         ensureBuildingAnalysisColumns();
         createBuildingTypeTable();
+        createDatasetImageRecordTable();
         System.out.println("数据库表初始化完成！");
     }
 
@@ -44,11 +45,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                 homogeneity DECIMAL(10,4) COMMENT '同质性',
                 asm DECIMAL(10,4) COMMENT '角二阶矩',
                 royal_ratio DECIMAL(10,4) COMMENT '皇家比例',
-                ai_building_type VARCHAR(120) COMMENT 'AI 推断的建筑类型',
-                ai_style VARCHAR(255) COMMENT 'AI 推断的建筑风格',
-                ai_estimated_era VARCHAR(120) COMMENT 'AI 推断的建筑年代',
-                ai_summary VARCHAR(1000) COMMENT 'AI 解析摘要',
-                ai_analysis_json LONGTEXT COMMENT 'AI 结构化解析结果 JSON',
+                ai_analyze LONGTEXT COMMENT '远程 AI 原始解析文本',
                 create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='建筑分析信息表'
@@ -65,28 +62,8 @@ public class DatabaseInitializer implements CommandLineRunner {
     private void ensureBuildingAnalysisColumns() {
         addColumnIfMissing(
                 "building_analysis",
-                "ai_building_type",
-                "ALTER TABLE building_analysis ADD COLUMN ai_building_type VARCHAR(120) COMMENT 'AI 推断的建筑类型'"
-        );
-        addColumnIfMissing(
-                "building_analysis",
-                "ai_style",
-                "ALTER TABLE building_analysis ADD COLUMN ai_style VARCHAR(255) COMMENT 'AI 推断的建筑风格'"
-        );
-        addColumnIfMissing(
-                "building_analysis",
-                "ai_estimated_era",
-                "ALTER TABLE building_analysis ADD COLUMN ai_estimated_era VARCHAR(120) COMMENT 'AI 推断的建筑年代'"
-        );
-        addColumnIfMissing(
-                "building_analysis",
-                "ai_summary",
-                "ALTER TABLE building_analysis ADD COLUMN ai_summary VARCHAR(1000) COMMENT 'AI 解析摘要'"
-        );
-        addColumnIfMissing(
-                "building_analysis",
-                "ai_analysis_json",
-                "ALTER TABLE building_analysis ADD COLUMN ai_analysis_json LONGTEXT COMMENT 'AI 结构化解析结果 JSON'"
+                "ai_analyze",
+                "ALTER TABLE building_analysis ADD COLUMN ai_analyze LONGTEXT COMMENT '远程 AI 原始解析文本'"
         );
     }
 
@@ -109,6 +86,54 @@ public class DatabaseInitializer implements CommandLineRunner {
             System.out.println("building_type 表创建成功");
         } catch (Exception e) {
             System.err.println("创建 building_type 表失败: " + e.getMessage());
+        }
+    }
+
+    private void createDatasetImageRecordTable() {
+        String sql = """
+            CREATE TABLE IF NOT EXISTS dataset_image_record (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+                dataset_name VARCHAR(120) NOT NULL COMMENT '数据集名称',
+                group_name VARCHAR(120) COMMENT '区域组中文名称',
+                group_relative_path VARCHAR(255) COMMENT 'ASCII 规范组路径',
+                original_group_relative_path VARCHAR(255) COMMENT '原始组路径',
+                schema_version VARCHAR(64) COMMENT 'schema 版本',
+                prompt_version VARCHAR(64) COMMENT 'prompt 版本',
+                generated_at VARCHAR(64) COMMENT '生成时间',
+                api_interface VARCHAR(64) COMMENT '模型接口类型',
+                model VARCHAR(120) COMMENT '模型名称',
+                province_level_region VARCHAR(120) COMMENT '省级区域',
+                province_confidence DECIMAL(10,4) COMMENT '区域置信度',
+                dynasty_guess VARCHAR(32) COMMENT '朝代判断',
+                building_rank VARCHAR(32) COMMENT '建筑等级',
+                scene_type VARCHAR(64) COMMENT '场景类型',
+                building_present TINYINT(1) COMMENT '是否存在建筑主体',
+                building_primary_colors_json LONGTEXT COMMENT '主体主色列表 JSON',
+                building_color_distribution_json LONGTEXT COMMENT '主体色彩占比 JSON',
+                architecture_style_json LONGTEXT COMMENT '建筑风格列表 JSON',
+                scene_description LONGTEXT COMMENT '场景描述',
+                reasoning_json LONGTEXT COMMENT '推理说明 JSON',
+                needs_manual_review TINYINT(1) COMMENT '是否需要人工复核',
+                file_name VARCHAR(255) COMMENT '文件名',
+                relative_path VARCHAR(255) COMMENT 'ASCII 规范相对路径',
+                original_relative_path VARCHAR(255) COMMENT '原始相对路径',
+                stored_image_path VARCHAR(500) COMMENT '服务端存储路径',
+                source_image_path VARCHAR(500) COMMENT '源图片路径',
+                analysis_status VARCHAR(32) COMMENT '分析状态',
+                error_message VARCHAR(1000) COMMENT '错误信息',
+                image_index INT COMMENT '图像序号',
+                raw_metadata_json LONGTEXT COMMENT '原始单图元数据 JSON',
+                create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uk_dataset_relative_path (dataset_name, relative_path)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='高质量建筑图像标注数据表'
+            """;
+
+        try {
+            jdbcTemplate.execute(sql);
+            System.out.println("dataset_image_record 表创建成功");
+        } catch (Exception e) {
+            System.err.println("创建 dataset_image_record 表失败: " + e.getMessage());
         }
     }
 
