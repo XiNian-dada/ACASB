@@ -72,6 +72,10 @@ def create_readme(temp_dir):
 - db.username: 数据库用户名
 - db.password: 数据库密码
 
+启动脚本说明：
+- start_java.* 会自动读取 config.properties 并传给 Spring Boot
+- start_python.* 会自动读取 python.host / python.port
+
 ### 2. 启动后端服务
 - Windows: 双击 start_java.bat
 - macOS: 双击 start_java.command

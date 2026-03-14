@@ -312,10 +312,16 @@ async def root():
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Order-Decoder API service...")
+    host = os.getenv("ACASB_PYTHON_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    try:
+        port = int(os.getenv("ACASB_PYTHON_PORT", "5000").strip() or "5000")
+    except ValueError:
+        port = 5000
+
+    logger.info("Starting Order-Decoder API service on %s:%s...", host, port)
     uvicorn.run(
         app,
-        host="127.0.0.1",
-        port=5000,
+        host=host,
+        port=port,
         log_level="info"
     )
