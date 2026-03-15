@@ -20,7 +20,7 @@
 | 数据集精确查询 | `/api/dataset/record-by-file` | 新增实现 | 按 `groupName + fileName` 查 |
 | 数据集概览统计 | `/api/dataset/stats/overview` | 已实现 | 总量、朝代、等级、区域等 |
 | 数据集区域统计 | `/api/dataset/stats/regions` | 已实现 | 省级分布 |
-| 数据集颜色统计 | `/api/dataset/stats/colors` | 已实现 | 颜色词聚合 |
+| 数据集颜色统计 | `/api/dataset/stats/colors` | 已实现 | 颜色词聚合，已补 `hex` |
 | 数据集等级统计 | `/api/dataset/stats/ranks` | 已实现 | 建筑等级聚合 |
 | 数据集风格统计 | `/api/dataset/stats/styles` | 已实现 | 风格词聚合 |
 | 大屏建筑色彩等级 | `/api/dashboard/color-levels` | 新增实现 | 基于真实等级数据 |
@@ -63,6 +63,7 @@
 说明：
 
 - 返回项里同时保留 `relativePath` 和 `originalRelativePath`
+- `buildingColorDistribution[].hex` 和 `rawMetadata.building_color_distribution[].hex` 已可直接用于前端渲染
 - `groupName=华东地区` 这类中文参数在实际请求里建议 URL encode
 
 ### 2.2 `GET /api/dataset/records/{id}`
@@ -197,6 +198,7 @@ curl -G "http://localhost:8080/api/dataset/record-by-file" \
 当前实现：
 
 - 颜色来自 `building_color_distribution`
+- 每个颜色词都会补一个稳定的 `hex`
 - `colors` 取该朝代最显著的前 4 个颜色词
 - `hex` 由颜色词映射为近似 UI 色值
 - `cultureTags` 优先使用朝代固定审美标签，缺失时退化为风格词拆分

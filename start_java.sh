@@ -1,10 +1,13 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
-set -uo pipefail
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
-CONFIG_FILE="$SCRIPT_DIR/config.properties"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${SCRIPT_DIR}/config.properties"
+LOG_DIR="${SCRIPT_DIR}/logs"
+RUN_DIR="${SCRIPT_DIR}/run"
+PID_FILE="${RUN_DIR}/java.pid"
+LOG_FILE="${LOG_DIR}/java.log"
 
 read_prop() {
   local key="$1"
@@ -23,33 +26,31 @@ read_prop() {
   fi
 }
 
-echo "Starting Java Backend Service..."
-echo
+mkdir -p "$LOG_DIR" "$RUN_DIR"
 
-if [[ -z "${JAVA_HOME:-}" && -x /usr/libexec/java_home ]]; then
-  if JAVA_HOME_CANDIDATE="$(/usr/libexec/java_home -v 17+ 2>/dev/null)"; then
-    export JAVA_HOME="$JAVA_HOME_CANDIDATE"
-  elif JAVA_HOME_CANDIDATE="$(/usr/libexec/java_home 2>/dev/null)"; then
-    export JAVA_HOME="$JAVA_HOME_CANDIDATE"
+if [[ -f "$PID_FILE" ]]; then
+  EXISTING_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if [[ -n "$EXISTING_PID" ]] && kill -0 "$EXISTING_PID" 2>/dev/null; then
+    echo "Java service is already running with PID ${EXISTING_PID}"
+    echo "Log file: ${LOG_FILE}"
+    exit 0
   fi
+  rm -f "$PID_FILE"
 fi
 
-if [[ -n "${JAVA_HOME:-}" ]]; then
-  export PATH="$JAVA_HOME/bin:$PATH"
-  echo "Using Java from: $JAVA_HOME"
+if [[ -f "${SCRIPT_DIR}/ACASB.jar" ]]; then
+  JAR_PATH="${SCRIPT_DIR}/ACASB.jar"
+elif [[ -f "${SCRIPT_DIR}/ACASB-0.0.1-SNAPSHOT.jar" ]]; then
+  JAR_PATH="${SCRIPT_DIR}/ACASB-0.0.1-SNAPSHOT.jar"
 else
-  echo "Using Java from PATH"
-fi
-
-if ! command -v java >/dev/null 2>&1; then
-  echo "Java not found. Install Java 17 or newer and try again."
-  echo
-  read -r "?Press Enter to close..."
+  echo "Could not find ACASB.jar or ACASB-0.0.1-SNAPSHOT.jar."
   exit 1
 fi
 
-java -version
-echo
+if ! command -v java >/dev/null 2>&1; then
+  echo "Java not found. Run ./install_linux.sh first."
+  exit 1
+fi
 
 DB_HOST="$(read_prop "db.host" "127.0.0.1")"
 DB_PORT="$(read_prop "db.port" "3306")"
@@ -57,7 +58,7 @@ DB_NAME="$(read_prop "db.name" "acasb")"
 DB_USERNAME="$(read_prop "db.username" "root")"
 DB_PASSWORD="$(read_prop "db.password" "")"
 SERVER_PORT="$(read_prop "server.port" "8081")"
-PYTHON_HOST="$(read_prop "python.host" "localhost")"
+PYTHON_HOST="$(read_prop "python.host" "127.0.0.1")"
 PYTHON_PORT="$(read_prop "python.port" "5000")"
 TEMP_FOLDER="$(read_prop "temp.folder" "./temp")"
 STORAGE_FOLDER="$(read_prop "storage.folder" "./uploads")"
@@ -72,6 +73,12 @@ AI_MODEL="$(read_prop "ai.analysis.model" "gpt-4.1-mini")"
 AUTH_JWT_ENABLED="$(read_prop "auth.jwt.enabled" "true")"
 AUTH_JWT_SECRET="$(read_prop "auth.jwt.secret" "")"
 AUTH_JWT_EXPIRES_HOURS="$(read_prop "auth.jwt.expires-hours" "720")"
+
+if [[ "${AUTH_JWT_ENABLED,,}" == "true" ]] && [[ -z "$AUTH_JWT_SECRET" ]]; then
+  echo "JWT auth is enabled but auth.jwt.secret is empty."
+  echo "Run ./install_linux.sh first or set auth.jwt.secret in config.properties."
+  exit 1
+fi
 
 SPRING_ARGS=(
   "--spring.datasource.url=jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai"
@@ -95,34 +102,24 @@ SPRING_ARGS=(
   "--auth.jwt.expires-hours=${AUTH_JWT_EXPIRES_HOURS}"
 )
 
-echo "Database target: ${DB_HOST}:${DB_PORT}/${DB_NAME}"
-echo "Java service port: ${SERVER_PORT}"
-echo "Python service: ${PYTHON_HOST}:${PYTHON_PORT}"
-echo "AI interface: ${AI_INTERFACE}"
-echo "JWT auth enabled: ${AUTH_JWT_ENABLED}"
-echo
+nohup java -jar "$JAR_PATH" "${SPRING_ARGS[@]}" >"$LOG_FILE" 2>&1 &
+JAVA_PID=$!
+echo "$JAVA_PID" >"$PID_FILE"
 
-if [[ -f "$SCRIPT_DIR/ACASB.jar" ]]; then
-  JAR_PATH="$SCRIPT_DIR/ACASB.jar"
-elif [[ -f "$SCRIPT_DIR/ACASB-0.0.1-SNAPSHOT.jar" ]]; then
-  JAR_PATH="$SCRIPT_DIR/ACASB-0.0.1-SNAPSHOT.jar"
-else
-  echo "Could not find ACASB.jar or ACASB-0.0.1-SNAPSHOT.jar."
-  echo
-  read -r "?Press Enter to close..."
+sleep 4
+if ! kill -0 "$JAVA_PID" 2>/dev/null; then
+  echo "Java service failed to start. Check ${LOG_FILE}"
+  rm -f "$PID_FILE"
   exit 1
 fi
 
-echo "Starting ACASB Java Backend on port ${SERVER_PORT}..."
-java -jar "$JAR_PATH" "${SPRING_ARGS[@]}"
-STATUS=$?
-
+echo "Java service started"
+echo "PID: ${JAVA_PID}"
+echo "Java service port: ${SERVER_PORT}"
+echo "Database: ${DB_HOST}:${DB_PORT}/${DB_NAME}"
+echo "Python service: ${PYTHON_HOST}:${PYTHON_PORT}"
+echo "JWT auth enabled: ${AUTH_JWT_ENABLED}"
+echo "Log file: ${LOG_FILE}"
 echo
-if [[ $STATUS -eq 0 ]]; then
-  echo "Java service stopped."
-else
-  echo "Java service exited with code $STATUS."
-fi
-
-read -r "?Press Enter to close..."
-exit $STATUS
+echo "Recent startup log:"
+tail -n 20 "$LOG_FILE"

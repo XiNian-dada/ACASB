@@ -10,4 +10,7 @@ public class DatasetColorDistributionItem {
 
     @JsonProperty("ratio")
     private Double ratio;
+
+    @JsonProperty("hex")
+    private String hex;
 }

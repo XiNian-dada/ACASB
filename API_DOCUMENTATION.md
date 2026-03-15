@@ -19,6 +19,19 @@ Base URL: `http://localhost:8080`
 
 部署包启动 Java 服务后，控制台会打印当前实例的 Bearer Token。
 
+当前默认开启 JWT 鉴权，拦截范围：
+
+- `/api/**`
+- `/data/**`
+
+可配置项：
+
+```properties
+auth.jwt.enabled=true
+auth.jwt.secret=请配置稳定长密钥
+auth.jwt.expires-hours=720
+```
+
 请求头格式：
 
 ```http
@@ -895,9 +908,9 @@ JSON Body：
         "buildingPresent": true,
         "buildingPrimaryColors": ["米白色", "黄色", "灰色"],
         "buildingColorDistribution": [
-          { "color": "米白色", "ratio": 0.55 },
-          { "color": "黄色", "ratio": 0.25 },
-          { "color": "灰色", "ratio": 0.2 }
+          { "color": "米白色", "ratio": 0.55, "hex": "#efe5cf" },
+          { "color": "黄色", "ratio": 0.25, "hex": "#f3b746" },
+          { "color": "灰色", "ratio": 0.2, "hex": "#888888" }
         ],
         "architectureStyle": ["近代中西合璧官式建筑", "民国公共建筑"],
         "sceneDescription": "画面主体为建筑外观中的近代以前传统建筑，建筑主体色彩分布为米白色约占55%，黄色约占25%，灰色约占20%，屋顶、立柱、墙面与台基层次清楚，整体呈现近代中西合璧官式建筑、民国公共建筑特征，材质以木构、灰瓦与石质构件组合为主，朝代判断归入清，建筑等级归入官员，整体审美与辽宁省传统建筑风格相符。",
@@ -924,9 +937,9 @@ JSON Body：
           "building_present": true,
           "building_primary_colors": ["米白色", "黄色", "灰色"],
           "building_color_distribution": [
-            { "color": "米白色", "ratio": 0.55 },
-            { "color": "黄色", "ratio": 0.25 },
-            { "color": "灰色", "ratio": 0.2 }
+            { "color": "米白色", "ratio": 0.55, "hex": "#efe5cf" },
+            { "color": "黄色", "ratio": 0.25, "hex": "#f3b746" },
+            { "color": "灰色", "ratio": 0.2, "hex": "#888888" }
           ],
           "architecture_style": ["近代中西合璧官式建筑", "民国公共建筑"],
           "scene_description": "画面主体为建筑外观中的近代以前传统建筑，建筑主体色彩分布为米白色约占55%，黄色约占25%，灰色约占20%，屋顶、立柱、墙面与台基层次清楚，整体呈现近代中西合璧官式建筑、民国公共建筑特征，材质以木构、灰瓦与石质构件组合为主，朝代判断归入清，建筑等级归入官员，整体审美与辽宁省传统建筑风格相符。",
@@ -979,9 +992,9 @@ JSON Body：
     "buildingPresent": true,
     "buildingPrimaryColors": ["米白色", "黄色", "灰色"],
     "buildingColorDistribution": [
-      { "color": "米白色", "ratio": 0.55 },
-      { "color": "黄色", "ratio": 0.25 },
-      { "color": "灰色", "ratio": 0.2 }
+      { "color": "米白色", "ratio": 0.55, "hex": "#efe5cf" },
+      { "color": "黄色", "ratio": 0.25, "hex": "#f3b746" },
+      { "color": "灰色", "ratio": 0.2, "hex": "#888888" }
     ],
     "architectureStyle": ["近代中西合璧官式建筑", "民国公共建筑"],
     "sceneDescription": "画面主体为建筑外观中的近代以前传统建筑，建筑主体色彩分布为米白色约占55%，黄色约占25%，灰色约占20%，屋顶、立柱、墙面与台基层次清楚，整体呈现近代中西合璧官式建筑、民国公共建筑特征，材质以木构、灰瓦与石质构件组合为主，朝代判断归入清，建筑等级归入官员，整体审美与辽宁省传统建筑风格相符。",
@@ -1152,17 +1165,22 @@ JSON Body：
   "code": 200,
   "msg": "success",
   "data": {
-    "total": 5,
+    "totalRecords": 312,
     "colors": [
-      { "name": "灰色", "imageCount": 219, "averageRatio": 0.3675 },
-      { "name": "白色", "imageCount": 158, "averageRatio": 0.3495 },
-      { "name": "红色", "imageCount": 163, "averageRatio": 0.2616 },
-      { "name": "灰黑色", "imageCount": 47, "averageRatio": 0.4145 },
-      { "name": "黄色", "imageCount": 44, "averageRatio": 0.2071 }
+      { "name": "灰色", "hex": "#888888", "imageCount": 219, "totalRatio": 80.48, "averageRatio": 0.3675 },
+      { "name": "白色", "hex": "#f2eada", "imageCount": 158, "totalRatio": 55.22, "averageRatio": 0.3495 },
+      { "name": "红色", "hex": "#c4473a", "imageCount": 163, "totalRatio": 42.64, "averageRatio": 0.2616 },
+      { "name": "灰黑色", "hex": "#4a4a4a", "imageCount": 47, "totalRatio": 19.48, "averageRatio": 0.4145 },
+      { "name": "土黄色", "hex": "#c49a44", "imageCount": 24, "totalRatio": 11.76, "averageRatio": 0.49 }
     ]
   }
 }
 ```
+
+说明：
+
+- `hex` 是后端为颜色词补齐的近似 UI 色值，用于前端直接渲染图例、色块和标签。
+- 当前即使存在 40 多种颜色词，也都会稳定返回对应的 `hex`。
 
 ### 13.8 等级统计
 
@@ -1313,10 +1331,10 @@ JSON 请求体支持两种字段写法：
     "building_present": true,
     "building_primary_colors": ["灰色", "红色", "蓝色", "金色"],
     "building_color_distribution": [
-      { "color": "灰色", "ratio": 0.62 },
-      { "color": "红色", "ratio": 0.23 },
-      { "color": "蓝色", "ratio": 0.1 },
-      { "color": "金色", "ratio": 0.05 }
+      { "color": "灰色", "ratio": 0.62, "hex": "#888888" },
+      { "color": "红色", "ratio": 0.23, "hex": "#c4473a" },
+      { "color": "蓝色", "ratio": 0.1, "hex": "#4d79a7" },
+      { "color": "金色", "ratio": 0.05, "hex": "#c9a227" }
     ],
     "architecture_style": ["皇家官式古建", "北方宫殿式建筑"],
     "scene_description": "画面主体为建筑群中的近代以前传统建筑，建筑主体色彩分布为灰色约占62%，红色约占23%，蓝色约占10%，金色约占5%，屋顶、立柱、墙面与台基层次清楚，整体呈现皇家官式古建、北方宫殿式建筑特征，材质以木构、灰瓦与石质构件组合为主，朝代判断归入清，建筑等级归入皇家，整体审美与云南省传统建筑风格相符。",
@@ -1354,6 +1372,11 @@ JSON 请求体支持两种字段写法：
   "royal_ratio": 0.3429
 }
 ```
+
+补充说明：
+
+- `ai_analyze` 现在会被后端标准化为 JSON 字符串，`building_color_distribution` 中同样会带 `hex`。
+- `ai_analysis.building_color_distribution[].hex` 与 `ai_analyze` 中的 `hex` 口径一致，前端优先读取 `ai_analysis` 更方便。
 
 ---
 

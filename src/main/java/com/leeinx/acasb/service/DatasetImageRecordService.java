@@ -7,9 +7,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leeinx.acasb.dto.DatasetColorDistributionItem;
 import com.leeinx.acasb.entity.DatasetImageRecord;
 import com.leeinx.acasb.mapper.DatasetImageRecordMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.util.UriUtils;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -20,6 +26,9 @@ import java.util.Map;
 @Service
 public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMapper, DatasetImageRecord> {
     private final ObjectMapper objectMapper;
+
+    @Value("${app.dataset-storage-folder:./dataset-storage}")
+    private String datasetStorageFolder;
 
     public DatasetImageRecordService(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -69,6 +78,16 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
                 .eq(DatasetImageRecord::getDatasetName, datasetName)
                 .eq(DatasetImageRecord::getGroupName, groupName)
                 .eq(DatasetImageRecord::getFileName, fileName)
+                .last("LIMIT 1"));
+    }
+
+    public DatasetImageRecord getRecordByDatasetAndRelativePath(String datasetName, String relativePath) {
+        if (!StringUtils.hasText(datasetName) || !StringUtils.hasText(relativePath)) {
+            return null;
+        }
+        return getOne(new LambdaQueryWrapper<DatasetImageRecord>()
+                .eq(DatasetImageRecord::getDatasetName, datasetName)
+                .eq(DatasetImageRecord::getRelativePath, relativePath)
                 .last("LIMIT 1"));
     }
 
@@ -141,7 +160,7 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
         item.put("sceneType", record.getSceneType());
         item.put("buildingPresent", record.getBuildingPresent());
         item.put("buildingPrimaryColors", parseJson(record.getBuildingPrimaryColorsJson()));
-        item.put("buildingColorDistribution", parseJson(record.getBuildingColorDistributionJson()));
+        item.put("buildingColorDistribution", parseAndEnrichColorDistribution(record.getBuildingColorDistributionJson()));
         item.put("architectureStyle", parseJson(record.getArchitectureStyleJson()));
         item.put("sceneDescription", record.getSceneDescription());
         item.put("reasoning", parseJson(record.getReasoningJson()));
@@ -149,12 +168,14 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
         item.put("fileName", record.getFileName());
         item.put("relativePath", record.getRelativePath());
         item.put("originalRelativePath", record.getOriginalRelativePath());
-        item.put("storedImagePath", record.getStoredImagePath());
-        item.put("sourceImagePath", record.getSourceImagePath());
+        item.put("storedImagePath", resolveCurrentStoredImagePath(record));
+        item.put("sourceImagePath", resolveExistingSourceImagePath(record));
+        item.put("imageUrl", buildImageUrl(record));
+        item.put("imageAvailable", hasStoredImage(record));
         item.put("analysisStatus", record.getAnalysisStatus());
         item.put("errorMessage", record.getErrorMessage());
         item.put("imageIndex", record.getImageIndex());
-        item.put("rawMetadata", parseJson(record.getRawMetadataJson()));
+        item.put("rawMetadata", parseRawMetadataWithHex(record.getRawMetadataJson()));
         item.put("createTime", record.getCreateTime());
         item.put("updateTime", record.getUpdateTime());
         return item;
@@ -224,7 +245,7 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
         Map<String, ColorAccumulator> accumulators = new LinkedHashMap<>();
 
         for (DatasetImageRecord record : records) {
-            for (DatasetColorDistributionItem item : parseColorDistribution(record.getBuildingColorDistributionJson())) {
+            for (DatasetColorDistributionItem item : parseAndEnrichColorDistribution(record.getBuildingColorDistributionJson())) {
                 if (!StringUtils.hasText(item.getColor())) {
                     continue;
                 }
@@ -240,6 +261,7 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
                 .map(entry -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("name", entry.getKey());
+                    item.put("hex", ColorPaletteResolver.resolve(entry.getKey()).hex());
                     item.put("imageCount", entry.getValue().imageCount);
                     item.put("totalRatio", round(entry.getValue().totalRatio));
                     item.put("averageRatio", round(entry.getValue().totalRatio / Math.max(entry.getValue().imageCount, 1)));
@@ -368,14 +390,189 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
         }
     }
 
-    private List<DatasetColorDistributionItem> parseColorDistribution(String json) {
+    private String resolveCurrentStoredImagePath(DatasetImageRecord record) {
+        Path resolved = resolveCurrentStoredImage(record);
+        return resolved == null ? null : resolved.toString();
+    }
+
+    private String resolveExistingSourceImagePath(DatasetImageRecord record) {
+        if (!StringUtils.hasText(record.getSourceImagePath())) {
+            return null;
+        }
+        try {
+            Path sourcePath = Paths.get(record.getSourceImagePath()).toAbsolutePath().normalize();
+            return Files.exists(sourcePath) ? sourcePath.toString() : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private boolean hasStoredImage(DatasetImageRecord record) {
+        Path resolved = resolveCurrentStoredImage(record);
+        return resolved != null && Files.exists(resolved);
+    }
+
+    private String buildImageUrl(DatasetImageRecord record) {
+        if (!StringUtils.hasText(record.getDatasetName()) || !StringUtils.hasText(record.getRelativePath())) {
+            return null;
+        }
+        return "/media/dataset/"
+                + UriUtils.encodePathSegment(record.getDatasetName(), StandardCharsets.UTF_8)
+                + "/"
+                + encodeRelativePath(record.getRelativePath());
+    }
+
+    private String encodeRelativePath(String relativePath) {
+        return java.util.Arrays.stream(relativePath.replace("\\", "/").split("/"))
+                .filter(StringUtils::hasText)
+                .map(part -> UriUtils.encodePathSegment(part, StandardCharsets.UTF_8))
+                .reduce((left, right) -> left + "/" + right)
+                .orElse("");
+    }
+
+    private Path resolveCurrentStoredImage(DatasetImageRecord record) {
+        if (!StringUtils.hasText(record.getDatasetName()) || !StringUtils.hasText(record.getRelativePath())) {
+            return null;
+        }
+
+        Path storageRoot = Paths.get(datasetStorageFolder).toAbsolutePath().normalize();
+        Path datasetRoot = storageRoot.resolve(sanitizePathSegment(record.getDatasetName())).normalize();
+
+        Path relativePath;
+        try {
+            relativePath = Paths.get(record.getRelativePath()).normalize();
+        } catch (Exception e) {
+            relativePath = Paths.get(sanitizePathSegment(record.getFileName()));
+        }
+
+        if (relativePath.isAbsolute() || relativePath.startsWith("..")) {
+            relativePath = Paths.get(sanitizePathSegment(record.getFileName()));
+        }
+
+        Path resolved = datasetRoot.resolve(relativePath).normalize();
+        if (!resolved.startsWith(datasetRoot)) {
+            resolved = datasetRoot.resolve(sanitizePathSegment(record.getFileName())).normalize();
+        }
+        return resolved;
+    }
+
+    public Path resolveMediaPath(String datasetName, String relativePath) {
+        DatasetImageRecord directRecord = new DatasetImageRecord();
+        directRecord.setDatasetName(datasetName);
+        directRecord.setRelativePath(relativePath);
+        directRecord.setFileName(extractFileName(relativePath));
+
+        Path directPath = resolveCurrentStoredImage(directRecord);
+        if (directPath != null && Files.exists(directPath)) {
+            return directPath;
+        }
+
+        DatasetImageRecord record = getRecordByDatasetAndRelativePath(datasetName, relativePath);
+        if (record == null) {
+            return null;
+        }
+
+        Path currentStoredPath = resolveCurrentStoredImage(record);
+        if (currentStoredPath != null && Files.exists(currentStoredPath)) {
+            return currentStoredPath;
+        }
+
+        Path legacyOriginalPath = resolveOriginalRelativeImage(record);
+        if (legacyOriginalPath != null && Files.exists(legacyOriginalPath)) {
+            return legacyOriginalPath;
+        }
+
+        if (StringUtils.hasText(record.getStoredImagePath())) {
+            try {
+                Path storedImagePath = Paths.get(record.getStoredImagePath()).toAbsolutePath().normalize();
+                if (Files.exists(storedImagePath)) {
+                    return storedImagePath;
+                }
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private Path resolveOriginalRelativeImage(DatasetImageRecord record) {
+        if (!StringUtils.hasText(record.getDatasetName()) || !StringUtils.hasText(record.getOriginalRelativePath())) {
+            return null;
+        }
+
+        Path storageRoot = Paths.get(datasetStorageFolder).toAbsolutePath().normalize();
+        Path datasetRoot = storageRoot.resolve(sanitizePathSegment(record.getDatasetName())).normalize();
+        try {
+            Path originalPath = Paths.get(record.getOriginalRelativePath()).normalize();
+            if (originalPath.isAbsolute() || originalPath.startsWith("..")) {
+                return null;
+            }
+            Path resolved = datasetRoot.resolve(originalPath).normalize();
+            if (!resolved.startsWith(datasetRoot)) {
+                return null;
+            }
+            return resolved;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String extractFileName(String relativePath) {
+        if (!StringUtils.hasText(relativePath)) {
+            return null;
+        }
+        int index = relativePath.replace("\\", "/").lastIndexOf('/');
+        return index >= 0 ? relativePath.substring(index + 1) : relativePath;
+    }
+
+    private String sanitizePathSegment(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "unknown";
+        }
+        String sanitized = value.trim().replace("\\", "/").replaceAll("/+", "/");
+        sanitized = sanitized.replaceAll("[^A-Za-z0-9._/-]", "-");
+        sanitized = sanitized.replaceAll("-{2,}", "-");
+        sanitized = sanitized.replaceAll("^[-/]+|[-/]+$", "");
+        return sanitized.isEmpty() ? "unknown" : sanitized;
+    }
+
+    private Object parseRawMetadataWithHex(String json) {
+        Object rawMetadata = parseJson(json);
+        if (rawMetadata instanceof Map<?, ?> metadataMap) {
+            Object distribution = metadataMap.get("building_color_distribution");
+            if (distribution instanceof List<?> distributionItems) {
+                enrichDistributionMaps(distributionItems);
+            }
+        }
+        return rawMetadata;
+    }
+
+    private void enrichDistributionMaps(List<?> distributionItems) {
+        for (Object item : distributionItems) {
+            if (!(item instanceof Map<?, ?> rawItem)) {
+                continue;
+            }
+            Object colorValue = rawItem.get("color");
+            if (!(colorValue instanceof String color) || !StringUtils.hasText(color)) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> mutableItem = (Map<String, Object>) rawItem;
+            mutableItem.put("hex", ColorPaletteResolver.resolve(color).hex());
+        }
+    }
+
+    private List<DatasetColorDistributionItem> parseAndEnrichColorDistribution(String json) {
         if (!StringUtils.hasText(json)) {
             return List.of();
         }
 
         try {
-            return objectMapper.readValue(json, new TypeReference<List<DatasetColorDistributionItem>>() {
+            List<DatasetColorDistributionItem> items = objectMapper.readValue(json, new TypeReference<List<DatasetColorDistributionItem>>() {
             });
+            ColorPaletteResolver.enrichDistributionItems(items);
+            return items;
         } catch (Exception e) {
             return List.of();
         }

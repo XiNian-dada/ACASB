@@ -174,7 +174,7 @@ public class OpenAiCompatibleBuildingAnalysisService {
                     return AiStructuredAnalysisResult.success(
                             PROVIDER_NAME,
                             aiAnalysisProperties.getModel(),
-                            sanitizeOutput(rawContent),
+                            serializeNormalizedAnalysis(normalized, rawContent),
                             normalized
                     );
                 } catch (RestClientResponseException e) {
@@ -323,10 +323,11 @@ public class OpenAiCompatibleBuildingAnalysisService {
         Map<String, Object> ratioItem = new LinkedHashMap<>();
         ratioItem.put("type", "object");
         ratioItem.put("additionalProperties", false);
-        ratioItem.put("required", List.of("color", "ratio"));
+        ratioItem.put("required", List.of("color", "ratio", "hex"));
         ratioItem.put("properties", Map.of(
                 "color", Map.of("type", "string"),
-                "ratio", Map.of("type", "number", "minimum", 0, "maximum", 1)
+                "ratio", Map.of("type", "number", "minimum", 0, "maximum", 1),
+                "hex", Map.of("type", "string")
         ));
         properties.put("building_color_distribution", Map.of(
                 "type", "array",
@@ -373,7 +374,7 @@ public class OpenAiCompatibleBuildingAnalysisService {
                   "scene_type": "建筑外观|建筑群|街景|园林|室内|其他",
                   "building_present": true,
                   "building_primary_colors": ["颜色1", "颜色2"],
-                  "building_color_distribution": [{"color": "红色", "ratio": 0.55}, {"color": "灰色", "ratio": 0.30}],
+                  "building_color_distribution": [{"color": "红色", "ratio": 0.55, "hex": "#c4473a"}, {"color": "灰色", "ratio": 0.30, "hex": "#888888"}],
                   "architecture_style": ["风格1", "风格2"],
                   "scene_description": "单行中文字符串，80到160字，描述画面主体、建筑主体颜色占比、建筑风格、材质、朝代和等级",
                   "reasoning": ["依据1", "依据2"],
@@ -386,7 +387,7 @@ public class OpenAiCompatibleBuildingAnalysisService {
                 3. dynasty_guess 必须从 唐、宋、元、明、清 五个中选一个，不得写其他朝代名称。
                 4. building_rank 必须从 皇家、王公、官员、平民 四个中选一个，不得写其他等级。
                 5. building_primary_colors 必须是 0 到 5 个中文颜色词，不要写材质。
-                6. building_color_distribution 必须填写建筑主体可见颜色占比，ratio 为 0 到 1 之间的小数，总和控制在 1 左右；只统计建筑主体，不统计天空、树木、行人和地面。
+                6. building_color_distribution 必须填写建筑主体可见颜色占比，ratio 为 0 到 1 之间的小数，总和控制在 1 左右；每个颜色项都必须包含 hex 字段，例如 "#c4473a"；只统计建筑主体，不统计天空、树木、行人和地面。
                 7. architecture_style 必须是 1 到 4 个简短风格标签，并明确属于近代以前的传统建筑体系，例如：皇家官式古建、北方寺观古建、徽派古建、闽南红砖古建、藏式古建、岭南祠庙古建。
                 8. scene_description 必须明确写出建筑主体颜色占比，例如“红色约占 50%%，灰色约占 30%%”，并明确写出朝代判断和建筑等级判断。
                 9. reasoning 必须是 2 到 5 条，只能写肉眼可见的视觉依据，且禁止出现“难以确定”“无法推测”“无法判断”“估计”“可能”“疑似”“大概”等措辞。
@@ -509,6 +510,14 @@ public class OpenAiCompatibleBuildingAnalysisService {
         return trimmed;
     }
 
+    private String serializeNormalizedAnalysis(DatasetImageMetadata normalized, String rawContent) {
+        try {
+            return objectMapper.writeValueAsString(normalized);
+        } catch (Exception e) {
+            return sanitizeOutput(rawContent);
+        }
+    }
+
     private DatasetImageMetadata normalizeAnalysis(Map<String, Object> raw, Path imagePath) {
         double provinceConfidence = normalizeConfidence(raw.get("province_confidence"));
         List<String> architectureStyle = uniqueTrimmedStrings(raw.get("architecture_style"), 4);
@@ -596,6 +605,7 @@ public class OpenAiCompatibleBuildingAnalysisService {
         DatasetColorDistributionItem colorItem = new DatasetColorDistributionItem();
         colorItem.setColor("灰色");
         colorItem.setRatio(1.0);
+        colorItem.setHex(ColorPaletteResolver.resolve(colorItem.getColor()).hex());
         metadata.setBuildingColorDistribution(List.of(colorItem));
         metadata.setArchitectureStyle(List.of("未识别"));
         metadata.setSceneDescription("分析失败，需要人工复核。");
@@ -733,6 +743,7 @@ public class OpenAiCompatibleBuildingAnalysisService {
                 DatasetColorDistributionItem distributionItem = new DatasetColorDistributionItem();
                 distributionItem.setColor(color);
                 distributionItem.setRatio(normalizeRatio(mapValue.get("ratio")));
+                distributionItem.setHex(ColorPaletteResolver.resolve(color).hex());
                 normalized.add(distributionItem);
                 if (normalized.size() >= 5) {
                     break;
@@ -747,6 +758,7 @@ public class OpenAiCompatibleBuildingAnalysisService {
                 DatasetColorDistributionItem item = new DatasetColorDistributionItem();
                 item.setColor(color);
                 item.setRatio(equalRatio);
+                item.setHex(ColorPaletteResolver.resolve(color).hex());
                 return item;
             }).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         }
@@ -764,6 +776,7 @@ public class OpenAiCompatibleBuildingAnalysisService {
             DatasetColorDistributionItem lastItem = normalized.get(normalized.size() - 1);
             lastItem.setRatio(round4(lastItem.getRatio() + (1.0 - adjustedTotal)));
         }
+        ColorPaletteResolver.enrichDistributionItems(normalized);
         return normalized;
     }
 

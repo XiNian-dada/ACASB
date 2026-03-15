@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACASB API Test Console</title>
+    <style>
+        :root {
+            --bg: #f3efe7;
+            --panel: #fffdf8;
+            --panel-strong: #f8f1e2;
+            --line: #d7c8ad;
+            --text: #2e261c;
+            --muted: #6e6253;
+            --accent: #8a4b2a;
+            --accent-strong: #5f2f16;
+            --success: #2f7d4f;
+            --danger: #b54732;
+            --code: #1f2937;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(138, 75, 42, 0.12), transparent 28%),
+                radial-gradient(circle at bottom right, rgba(95, 47, 22, 0.10), transparent 26%),
+                linear-gradient(180deg, #f7f3ec 0%, #efe7d7 100%);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .page {
+            max-width: 1460px;
+            margin: 0 auto;
+        }
+
+        .hero,
+        .panel {
+            background: rgba(255, 253, 248, 0.92);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(124, 92, 58, 0.16);
+            border-radius: 22px;
+            box-shadow: 0 18px 45px rgba(67, 42, 25, 0.10);
+        }
+
+        .hero {
+            padding: 28px;
+            margin-bottom: 18px;
+        }
+
+        .hero h1 {
+            margin: 0;
+            font-size: 34px;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+        }
+
+        .hero p {
+            margin: 12px 0 0;
+            color: var(--muted);
+            max-width: 920px;
+            line-height: 1.65;
+        }
+
+        .hero-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: var(--panel-strong);
+            border: 1px solid var(--line);
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 18px;
+        }
+
+        .left,
+        .right {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .panel {
+            padding: 20px;
+        }
+
+        .panel h2 {
+            margin: 0 0 14px;
+            font-size: 18px;
+            letter-spacing: 0.01em;
+        }
+
+        .section-note {
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.55;
+            margin-bottom: 16px;
+        }
+
+        .field {
+            margin-bottom: 14px;
+        }
+
+        .field:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--muted);
+        }
+
+        input,
+        textarea,
+        select {
+            width: 100%;
+            padding: 11px 12px;
+            border-radius: 12px;
+            border: 1px solid var(--line);
+            background: #fff;
+            color: var(--text);
+            font-size: 14px;
+            transition: border-color 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        input:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(138, 75, 42, 0.12);
+        }
+
+        textarea {
+            min-height: 110px;
+            resize: vertical;
+            font-family: "SF Mono", "JetBrains Mono", monospace;
+            line-height: 1.5;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .row-3 {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .button-grid.single {
+            grid-template-columns: 1fr;
+        }
+
+        button {
+            appearance: none;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 14px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+        }
+
+        button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+            color: #fff7f1;
+            box-shadow: 0 12px 28px rgba(95, 47, 22, 0.22);
+        }
+
+        .btn-secondary {
+            background: #ede4d6;
+            color: var(--text);
+            border: 1px solid var(--line);
+        }
+
+        .btn-danger {
+            background: #f5d8d1;
+            color: #7b2a1a;
+            border: 1px solid #d9a79b;
+        }
+
+        .inline-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .checkbox {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: #fff;
+            font-size: 14px;
+        }
+
+        .checkbox input {
+            width: 18px;
+            height: 18px;
+            margin: 0;
+        }
+
+        .result-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .status {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .status strong {
+            color: var(--text);
+        }
+
+        .console {
+            background: linear-gradient(180deg, #19150f 0%, #211912 100%);
+            color: #f7f4eb;
+            border-radius: 18px;
+            padding: 16px;
+            min-height: 560px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .console h3 {
+            margin: 0 0 10px;
+            font-size: 14px;
+            color: #d7c4a4;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .console pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 13px;
+            line-height: 1.6;
+            font-family: "SF Mono", "JetBrains Mono", monospace;
+            color: #f2ede2;
+        }
+
+        .console-block {
+            margin-bottom: 18px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .console-block:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .hint-list {
+            margin: 0;
+            padding-left: 18px;
+            color: var(--muted);
+            line-height: 1.65;
+            font-size: 13px;
+        }
+
+        .small {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        @media (max-width: 1100px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 720px) {
+            body {
+                padding: 14px;
+            }
+
+            .hero,
+            .panel {
+                padding: 16px;
+                border-radius: 18px;
+            }
+
+            .hero h1 {
+                font-size: 28px;
+            }
+
+            .row,
+            .row-3,
+            .button-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <section class="hero">
+        <h1>ACASB API Test Console</h1>
+        <p>
+            这是一个独立的接口测试页面。默认指向生产地址 <code>http://server.hairuosky.cn:1111</code>，
+            支持 JWT Token、数据集接口、大屏接口、互动接口、图片分析上传，以及任意自定义请求。
+        </p>
+        <div class="hero-meta">
+            <div class="chip">默认 Base URL: <strong id="heroBaseUrl">http://server.hairuosky.cn:1111</strong></div>
+            <div class="chip">鉴权: <strong>Bearer Token</strong></div>
+            <div class="chip">适合: <strong>联调 / 回归 / 线上排查</strong></div>
+        </div>
+    </section>
+
+    <div class="grid">
+        <div class="left">
+            <section class="panel">
+                <h2>环境配置</h2>
+                <p class="section-note">默认已经填好云端 Java 地址。部署后你只要粘贴启动日志里的 Bearer Token 就能开始测。</p>
+
+                <div class="field">
+                    <label for="baseUrl">Base URL</label>
+                    <input id="baseUrl" type="text" value="http://server.hairuosky.cn:1111">
+                </div>
+
+                <div class="field">
+                    <label for="token">Bearer Token</label>
+                    <textarea id="token" placeholder="粘贴 Java 服务启动日志打印的 Bearer Token"></textarea>
+                </div>
+
+                <div class="row">
+                    <div class="field">
+                        <label for="datasetName">datasetName</label>
+                        <input id="datasetName" type="text" value="competition-dataset">
+                    </div>
+                    <div class="field">
+                        <label for="dynasty">dynasty</label>
+                        <select id="dynasty">
+                            <option value="qing" selected>qing</option>
+                            <option value="ming">ming</option>
+                            <option value="yuan">yuan</option>
+                            <option value="song">song</option>
+                            <option value="tang">tang</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="field">
+                        <label for="groupName">groupName</label>
+                        <input id="groupName" type="text" value="中南地区">
+                    </div>
+                    <div class="field">
+                        <label for="fileName">fileName</label>
+                        <input id="fileName" type="text" value="47.jpg">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="field">
+                        <label for="imageIndex">imageIndex</label>
+                        <input id="imageIndex" type="number" value="54">
+                    </div>
+                    <div class="field">
+                        <label for="rankId">rankId</label>
+                        <select id="rankId">
+                            <option value="emperor">emperor</option>
+                            <option value="prince">prince</option>
+                            <option value="official">official</option>
+                            <option value="merchant">merchant</option>
+                            <option value="civilian" selected>civilian</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="inline-actions">
+                    <button class="btn-primary" id="saveSettingsBtn">保存到浏览器</button>
+                    <button class="btn-secondary" id="loadDefaultsBtn">恢复默认</button>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>快速请求</h2>
+                <div class="button-grid">
+                    <button class="btn-primary" data-action="health">/api/health</button>
+                    <button class="btn-secondary" data-action="apiTest">/api/test</button>
+                    <button class="btn-secondary" data-action="pythonTest">/testPython</button>
+                    <button class="btn-secondary" data-action="overview">/api/dataset/stats/overview</button>
+                    <button class="btn-secondary" data-action="colors">/api/dataset/stats/colors</button>
+                    <button class="btn-secondary" data-action="recordByFile">/api/dataset/record-by-file</button>
+                    <button class="btn-secondary" data-action="recordByIndex">/api/dataset/record-by-index</button>
+                    <button class="btn-secondary" data-action="colorLevels">/api/dashboard/color-levels</button>
+                    <button class="btn-secondary" data-action="dynastyStats">/api/dashboard/dynasty-stats</button>
+                    <button class="btn-secondary" data-action="mapDistribution">/api/dashboard/map-distribution</button>
+                    <button class="btn-secondary" data-action="coreColors">/api/dashboard/core-colors</button>
+                    <button class="btn-secondary" data-action="colorAnalysis">/api/dashboard/color-analysis</button>
+                    <button class="btn-secondary" data-action="levelStats">/api/dashboard/level-stats</button>
+                    <button class="btn-secondary" data-action="dynastyComparison">/api/dashboard/dynasty-comparison</button>
+                    <button class="btn-secondary" data-action="historyTrend">/api/dashboard/history-trend</button>
+                    <button class="btn-secondary" data-action="regionRankDist">/api/dashboard/region-rank-dist</button>
+                    <button class="btn-secondary" data-action="materialAnalysis">/api/dashboard/material-analysis</button>
+                    <button class="btn-secondary" data-action="rankRules">/api/experience/rank-rules</button>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>图片分析</h2>
+                <p class="section-note">这里会直接调用 Java 的 `/api/analyze`。你只需要选图片，Java 会转给内网 Python 特征服务和云端 AI。</p>
+                <div class="field">
+                    <label for="analyzeFile">上传图片</label>
+                    <input id="analyzeFile" type="file" accept="image/*">
+                </div>
+                <label class="checkbox">
+                    <input id="enableAi" type="checkbox" checked>
+                    <span>强制启用云端 AI</span>
+                </label>
+                <div class="inline-actions" style="margin-top: 14px;">
+                    <button class="btn-primary" id="analyzeBtn">执行 /api/analyze</button>
+                </div>
+                <p class="small" style="margin-top: 10px;">如果返回里 `ai_analysis.building_color_distribution[].hex` 和 `ai_analyze` 中的 JSON 都有 `hex`，说明链路正常。</p>
+            </section>
+
+            <section class="panel">
+                <h2>互动校验</h2>
+                <div class="field">
+                    <label for="validateBody">POST /api/experience/validate Body</label>
+                    <textarea id="validateBody">{
+  "rankId": "civilian",
+  "selections": [
+    { "part": "屋顶", "colorHex": "#f3b746" },
+    { "part": "墙体", "colorHex": "#888888" }
+  ]
+}</textarea>
+                </div>
+                <div class="inline-actions">
+                    <button class="btn-primary" id="validateBtn">执行合法性校验</button>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>通用调试器</h2>
+                <div class="row">
+                    <div class="field">
+                        <label for="genericMethod">Method</label>
+                        <select id="genericMethod">
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                            <option value="DELETE">DELETE</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="genericPath">Path</label>
+                        <input id="genericPath" type="text" value="/api/dataset/stats/overview?datasetName=competition-dataset">
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="genericBody">JSON Body</label>
+                    <textarea id="genericBody" placeholder='例如：{"dynasty":"qing"}'></textarea>
+                </div>
+                <div class="inline-actions">
+                    <button class="btn-primary" id="genericSendBtn">发送请求</button>
+                    <button class="btn-danger" id="clearConsoleBtn">清空输出</button>
+                </div>
+            </section>
+        </div>
+
+        <div class="right">
+            <section class="panel">
+                <h2>返回结果</h2>
+                <div class="result-toolbar">
+                    <div class="status">
+                        <div><strong>最后请求</strong>: <span id="lastRequest">尚未发送</span></div>
+                        <div><strong>状态</strong>: <span id="lastStatus">-</span></div>
+                    </div>
+                    <div class="inline-actions">
+                        <button class="btn-secondary" id="copyResponseBtn">复制响应 JSON</button>
+                        <button class="btn-secondary" id="copyCurlBtn">复制请求摘要</button>
+                    </div>
+                </div>
+                <div class="console">
+                    <div class="console-block">
+                        <h3>Request</h3>
+                        <pre id="requestPreview">等待请求...</pre>
+                    </div>
+                    <div class="console-block">
+                        <h3>Response</h3>
+                        <pre id="responsePreview">等待响应...</pre>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>使用提示</h2>
+                <ul class="hint-list">
+                    <li>部署后如果只暴露 Java 端口，这个页面依然能正常测，因为 Python 服务只在内网被 Java 调用。</li>
+                    <li>浏览器端联调时，请优先测 `/api/dataset/*`、`/api/dashboard/*`、`/api/experience/*` 和 `/api/analyze`。</li>
+                    <li>所有 `/api/**` 和 `/data/**` 请求默认都要带 Bearer Token。</li>
+                    <li>如果跨域访问失败，请确认线上 Java 服务已经正常启动且没有被反向代理拦掉 `Authorization` 头。</li>
+                    <li>这个页面是纯静态文件，可以本地双击打开，也可以丢到 Nginx 静态目录里使用。</li>
+                </ul>
+            </section>
+        </div>
+    </div>
+</div>
+
+<script>
+    const storageKey = 'acasb-api-test-settings-v1';
+    const defaultSettings = {
+        baseUrl: 'http://server.hairuosky.cn:1111',
+        token: '',
+        datasetName: 'competition-dataset',
+        dynasty: 'qing',
+        groupName: '中南地区',
+        fileName: '47.jpg',
+        imageIndex: '54',
+        rankId: 'civilian'
+    };
+
+    const elements = {
+        baseUrl: document.getElementById('baseUrl'),
+        token: document.getElementById('token'),
+        datasetName: document.getElementById('datasetName'),
+        dynasty: document.getElementById('dynasty'),
+        groupName: document.getElementById('groupName'),
+        fileName: document.getElementById('fileName'),
+        imageIndex: document.getElementById('imageIndex'),
+        rankId: document.getElementById('rankId'),
+        heroBaseUrl: document.getElementById('heroBaseUrl'),
+        requestPreview: document.getElementById('requestPreview'),
+        responsePreview: document.getElementById('responsePreview'),
+        lastRequest: document.getElementById('lastRequest'),
+        lastStatus: document.getElementById('lastStatus'),
+        genericMethod: document.getElementById('genericMethod'),
+        genericPath: document.getElementById('genericPath'),
+        genericBody: document.getElementById('genericBody'),
+        analyzeFile: document.getElementById('analyzeFile'),
+        enableAi: document.getElementById('enableAi'),
+        validateBody: document.getElementById('validateBody')
+    };
+
+    let lastResponseText = '';
+    let lastCurlText = '';
+
+    function loadSettings() {
+        try {
+            const raw = localStorage.getItem(storageKey);
+            if (!raw) {
+                applySettings(defaultSettings);
+                return;
+            }
+            applySettings({ ...defaultSettings, ...JSON.parse(raw) });
+        } catch (error) {
+            applySettings(defaultSettings);
+        }
+    }
+
+    function applySettings(settings) {
+        Object.entries(settings).forEach(([key, value]) => {
+            if (elements[key]) {
+                elements[key].value = value;
+            }
+        });
+        elements.heroBaseUrl.textContent = settings.baseUrl || defaultSettings.baseUrl;
+    }
+
+    function saveSettings() {
+        const settings = {
+            baseUrl: elements.baseUrl.value.trim(),
+            token: elements.token.value.trim(),
+            datasetName: elements.datasetName.value.trim(),
+            dynasty: elements.dynasty.value,
+            groupName: elements.groupName.value.trim(),
+            fileName: elements.fileName.value.trim(),
+            imageIndex: elements.imageIndex.value.trim(),
+            rankId: elements.rankId.value
+        };
+        localStorage.setItem(storageKey, JSON.stringify(settings));
+        elements.heroBaseUrl.textContent = settings.baseUrl || defaultSettings.baseUrl;
+        setStatus('配置已保存到浏览器');
+    }
+
+    function resetSettings() {
+        applySettings(defaultSettings);
+        elements.token.value = '';
+        localStorage.removeItem(storageKey);
+        setStatus('已恢复默认配置');
+    }
+
+    function normalizedBaseUrl() {
+        return (elements.baseUrl.value.trim() || defaultSettings.baseUrl).replace(/\/$/, '');
+    }
+
+    function tokenValue() {
+        return elements.token.value.trim();
+    }
+
+    function headers(includeJson = false, forceAuth = true) {
+        const result = {};
+        if (includeJson) {
+            result['Content-Type'] = 'application/json';
+        }
+        if (forceAuth && tokenValue()) {
+            result['Authorization'] = tokenValue().startsWith('Bearer ')
+                ? tokenValue()
+                : `Bearer ${tokenValue()}`;
+        }
+        return result;
+    }
+
+    function setStatus(text, isError = false) {
+        elements.lastStatus.textContent = text;
+        elements.lastStatus.style.color = isError ? '#f4b4a8' : '#d7c4a4';
+    }
+
+    function pretty(value) {
+        if (typeof value === 'string') {
+            try {
+                return JSON.stringify(JSON.parse(value), null, 2);
+            } catch (_) {
+                return value;
+            }
+        }
+        return JSON.stringify(value, null, 2);
+    }
+
+    function updateConsole(requestInfo, responseInfo) {
+        elements.lastRequest.textContent = requestInfo.summary;
+        elements.requestPreview.textContent = pretty(requestInfo.detail);
+        elements.responsePreview.textContent = pretty(responseInfo.detail);
+        lastResponseText = typeof responseInfo.detail === 'string'
+            ? responseInfo.detail
+            : JSON.stringify(responseInfo.detail, null, 2);
+        lastCurlText = requestInfo.curl || requestInfo.summary;
+    }
+
+    function buildQuery(params) {
+        const search = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && value !== '') {
+                search.append(key, value);
+            }
+        });
+        const text = search.toString();
+        return text ? `?${text}` : '';
+    }
+
+    async function sendJsonRequest({ method, path, body = null, auth = true }) {
+        const url = `${normalizedBaseUrl()}${path}`;
+        const startedAt = performance.now();
+        const requestInfo = {
+            summary: `${method} ${path}`,
+            detail: {
+                method,
+                url,
+                headers: headers(Boolean(body), auth),
+                body
+            },
+            curl: `${method} ${url}`
+        };
+        updateConsole(requestInfo, { detail: '请求中...' });
+        try {
+            const response = await fetch(url, {
+                method,
+                headers: headers(Boolean(body), auth),
+                body: body ? JSON.stringify(body) : undefined
+            });
+            const text = await response.text();
+            let parsed;
+            try {
+                parsed = JSON.parse(text);
+            } catch (_) {
+                parsed = text;
+            }
+            const elapsed = Math.round(performance.now() - startedAt);
+            setStatus(`${response.status} ${response.statusText} · ${elapsed}ms`, !response.ok);
+            updateConsole(requestInfo, {
+                detail: parsed
+            });
+        } catch (error) {
+            setStatus(error.message, true);
+            updateConsole(requestInfo, { detail: String(error) });
+        }
+    }
+
+    async function sendMultipartAnalyze() {
+        const file = elements.analyzeFile.files[0];
+        if (!file) {
+            setStatus('请先选择图片文件', true);
+            return;
+        }
+        const path = '/api/analyze';
+        const url = `${normalizedBaseUrl()}${path}`;
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('enable_ai', String(elements.enableAi.checked));
+
+        const requestInfo = {
+            summary: `POST ${path}`,
+            detail: {
+                method: 'POST',
+                url,
+                headers: headers(false, true),
+                body: {
+                    file: file.name,
+                    enable_ai: elements.enableAi.checked
+                }
+            },
+            curl: `POST ${url} (multipart/form-data)`
+        };
+        updateConsole(requestInfo, { detail: '上传中...' });
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: headers(false, true),
+                body: formData
+            });
+            const text = await response.text();
+            let parsed;
+            try {
+                parsed = JSON.parse(text);
+            } catch (_) {
+                parsed = text;
+            }
+            setStatus(`${response.status} ${response.statusText}`, !response.ok);
+            updateConsole(requestInfo, { detail: parsed });
+        } catch (error) {
+            setStatus(error.message, true);
+            updateConsole(requestInfo, { detail: String(error) });
+        }
+    }
+
+    async function sendGenericRequest() {
+        const method = elements.genericMethod.value;
+        const path = elements.genericPath.value.trim();
+        if (!path) {
+            setStatus('请填写调试路径', true);
+            return;
+        }
+
+        let body = null;
+        if (method !== 'GET' && elements.genericBody.value.trim()) {
+            try {
+                body = JSON.parse(elements.genericBody.value);
+            } catch (error) {
+                setStatus(`JSON Body 无法解析: ${error.message}`, true);
+                return;
+            }
+        }
+        await sendJsonRequest({ method, path, body, auth: path.startsWith('/api/') || path.startsWith('/data/') });
+    }
+
+    function actionPath(action) {
+        const datasetName = elements.datasetName.value.trim();
+        const dynasty = elements.dynasty.value;
+        const groupName = elements.groupName.value.trim();
+        const fileName = elements.fileName.value.trim();
+        const imageIndex = elements.imageIndex.value.trim();
+        const rankId = elements.rankId.value;
+
+        switch (action) {
+            case 'health':
+                return { method: 'GET', path: '/api/health', auth: true };
+            case 'apiTest':
+                return { method: 'GET', path: '/api/test', auth: true };
+            case 'pythonTest':
+                return { method: 'GET', path: '/testPython', auth: false };
+            case 'overview':
+                return { method: 'GET', path: `/api/dataset/stats/overview${buildQuery({ datasetName })}`, auth: true };
+            case 'colors':
+                return { method: 'GET', path: `/api/dataset/stats/colors${buildQuery({ datasetName, limit: 12 })}`, auth: true };
+            case 'recordByFile':
+                return { method: 'GET', path: `/api/dataset/record-by-file${buildQuery({ datasetName, groupName, fileName })}`, auth: true };
+            case 'recordByIndex':
+                return { method: 'GET', path: `/api/dataset/record-by-index${buildQuery({ datasetName, groupName, imageIndex })}`, auth: true };
+            case 'colorLevels':
+                return { method: 'GET', path: `/api/dashboard/color-levels${buildQuery({ datasetName })}`, auth: true };
+            case 'dynastyStats':
+                return { method: 'GET', path: `/api/dashboard/dynasty-stats${buildQuery({ datasetName, dynasty })}`, auth: true };
+            case 'mapDistribution':
+                return { method: 'GET', path: `/api/dashboard/map-distribution${buildQuery({ datasetName, dynasty })}`, auth: true };
+            case 'coreColors':
+                return { method: 'GET', path: `/api/dashboard/core-colors${buildQuery({ datasetName, dynasty })}`, auth: true };
+            case 'colorAnalysis':
+                return { method: 'GET', path: `/api/dashboard/color-analysis${buildQuery({ datasetName, dynasty })}`, auth: true };
+            case 'levelStats':
+                return { method: 'GET', path: `/api/dashboard/level-stats${buildQuery({ datasetName, dynasty })}`, auth: true };
+            case 'dynastyComparison':
+                return { method: 'GET', path: `/api/dashboard/dynasty-comparison${buildQuery({ datasetName })}`, auth: true };
+            case 'historyTrend':
+                return { method: 'GET', path: `/api/dashboard/history-trend${buildQuery({ datasetName })}`, auth: true };
+            case 'regionRankDist':
+                return { method: 'GET', path: `/api/dashboard/region-rank-dist${buildQuery({ datasetName })}`, auth: true };
+            case 'materialAnalysis':
+                return { method: 'GET', path: `/api/dashboard/material-analysis${buildQuery({ datasetName })}`, auth: true };
+            case 'rankRules':
+                return { method: 'GET', path: `/api/experience/rank-rules${buildQuery({ rankId })}`, auth: true };
+            default:
+                return null;
+        }
+    }
+
+    document.querySelectorAll('[data-action]').forEach(button => {
+        button.addEventListener('click', async () => {
+            const config = actionPath(button.dataset.action);
+            if (!config) {
+                return;
+            }
+            await sendJsonRequest(config);
+        });
+    });
+
+    document.getElementById('analyzeBtn').addEventListener('click', sendMultipartAnalyze);
+    document.getElementById('genericSendBtn').addEventListener('click', sendGenericRequest);
+    document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+    document.getElementById('loadDefaultsBtn').addEventListener('click', resetSettings);
+    document.getElementById('clearConsoleBtn').addEventListener('click', () => {
+        updateConsole(
+            { summary: '尚未发送', detail: '等待请求...', curl: '' },
+            { detail: '等待响应...' }
+        );
+        setStatus('-');
+    });
+    document.getElementById('validateBtn').addEventListener('click', async () => {
+        try {
+            const body = JSON.parse(elements.validateBody.value);
+            await sendJsonRequest({
+                method: 'POST',
+                path: '/api/experience/validate',
+                body,
+                auth: true
+            });
+        } catch (error) {
+            setStatus(`JSON Body 无法解析: ${error.message}`, true);
+        }
+    });
+    document.getElementById('copyResponseBtn').addEventListener('click', async () => {
+        if (!lastResponseText) {
+            return;
+        }
+        await navigator.clipboard.writeText(lastResponseText);
+        setStatus('响应 JSON 已复制');
+    });
+    document.getElementById('copyCurlBtn').addEventListener('click', async () => {
+        if (!lastCurlText) {
+            return;
+        }
+        await navigator.clipboard.writeText(lastCurlText);
+        setStatus('请求摘要已复制');
+    });
+
+    loadSettings();
+    updateConsole(
+        { summary: '尚未发送', detail: '等待请求...', curl: '' },
+        { detail: '等待响应...' }
+    );
+    setStatus('就绪');
+</script>
+</body>
+</html>

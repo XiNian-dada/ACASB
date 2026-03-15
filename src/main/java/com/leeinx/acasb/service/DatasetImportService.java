@@ -231,6 +231,8 @@ public class DatasetImportService {
             String datasetName,
             String storedImagePath,
             String sourceImagePath) throws IOException {
+        enrichMetadataColors(metadata);
+
         DatasetImageRecord record = new DatasetImageRecord();
         record.setDatasetName(datasetName);
         record.setGroupName(manifest.getGroupName());
@@ -263,6 +265,13 @@ public class DatasetImportService {
         record.setImageIndex(metadata.getImageIndex());
         record.setRawMetadataJson(objectMapper.writeValueAsString(metadata));
         return record;
+    }
+
+    private void enrichMetadataColors(DatasetImageMetadata metadata) {
+        if (metadata == null) {
+            return;
+        }
+        ColorPaletteResolver.enrichDistributionItems(metadata.getBuildingColorDistribution());
     }
 
     private Path resolveDatasetRoot(String datasetPath) {

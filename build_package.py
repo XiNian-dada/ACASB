@@ -29,7 +29,15 @@ def create_package_structure(project_root, temp_dir):
     shutil.copytree(analysis_source, analysis_dest, ignore=shutil.ignore_patterns('__pycache__'))
     print(f"复制 acasb-analysis 目录: {analysis_dest}")
     
-    for script in ["start_java.bat", "start_python.bat", "start_java.command", "start_python.command"]:
+    for script in [
+        "start_java.bat",
+        "start_python.bat",
+        "start_java.command",
+        "start_python.command",
+        "start_java.sh",
+        "start_python.sh",
+        "install_linux.sh",
+    ]:
         src = os.path.join(project_root, script)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(temp_dir, script))
@@ -37,13 +45,15 @@ def create_package_structure(project_root, temp_dir):
         else:
             print(f"警告: 找不到脚本 {script}，跳过")
     
-    frontend_source = os.path.join(project_root, "acasb-frontend", "index.html")
-    if os.path.exists(frontend_source):
-        frontend_dest = os.path.join(temp_dir, "index.html")
-        shutil.copy2(frontend_source, frontend_dest)
-        print(f"复制前端文件: {frontend_dest}")
-    else:
-        print("警告: 找不到前端文件 index.html")
+    frontend_dir = os.path.join(project_root, "acasb-frontend")
+    for frontend_file in ["index.html", "api-test.html"]:
+        frontend_source = os.path.join(frontend_dir, frontend_file)
+        if os.path.exists(frontend_source):
+            frontend_dest = os.path.join(temp_dir, frontend_file)
+            shutil.copy2(frontend_source, frontend_dest)
+            print(f"复制前端文件: {frontend_dest}")
+        else:
+            print(f"警告: 找不到前端文件 {frontend_file}")
     
     config_source = os.path.join(project_root, "config.properties")
     if os.path.exists(config_source):
@@ -77,6 +87,9 @@ def create_readme(temp_dir):
 	- ai.analysis.chat-completions-path: Chat Completions 接口路径
 	- ai.analysis.api-key: AI 接口密钥
 	- ai.analysis.model: AI 模型名称
+	- auth.jwt.enabled: 是否启用 JWT 鉴权，生产环境建议 true
+	- auth.jwt.secret: 稳定 JWT 密钥，生产环境必须配置
+	- auth.jwt.expires-hours: Token 有效期（小时）
 
 	启动脚本说明：
 	- start_java.* 会自动读取 config.properties 并传给 Spring Boot
@@ -85,13 +98,23 @@ def create_readme(temp_dir):
 ### 2. 启动后端服务
 - Windows: 双击 start_java.bat
 - macOS: 双击 start_java.command
+- Linux: `./start_java.sh`
 
 ### 3. 启动 Python 服务
 - Windows: 双击 start_python.bat
 - macOS: 双击 start_python.command
+- Linux: `./start_python.sh`
+
+### Linux 一键安装
+- Linux: `chmod +x install_linux.sh start_java.sh start_python.sh && ./install_linux.sh`
 
 ### 4. 访问前端
 双击 index.html 在浏览器中打开
+
+### 4.1 API 测试页
+- 打开 `api-test.html`
+- 默认 Base URL 已指向生产地址
+- 粘贴 Java 启动日志打印的 Bearer Token 即可测试接口
 
 ### 5. API 文档
 查看 API_DOCUMENTATION.md 了解接口使用方法
@@ -101,13 +124,15 @@ def create_readme(temp_dir):
 - 确保 Python 3.8+ 已安装
 - 确保数据库服务已启动
 - 确保端口 8080 和 5000 未被占用
+- 生产环境请确保 `auth.jwt.enabled=true` 且已配置稳定的 `auth.jwt.secret`
 
 ## 目录结构
 - ACASB.jar (后端 JAR 包)
 - config.properties (配置文件)
 - start_java.bat / start_python.bat (Windows 启动脚本)
 - start_java.command / start_python.command (macOS 启动脚本)
-- index.html (前端页面)
+- install_linux.sh / start_java.sh / start_python.sh (Linux 脚本)
+- index.html / api-test.html (前端页面 / API 测试页)
 - acasb-analysis/ (Python 分析代码)
 - datasets/ (数据集)
 - README.txt (本文件)

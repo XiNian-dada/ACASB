@@ -139,7 +139,7 @@ public class DashboardService {
                 .map(entry -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("name", simplifyColorName(entry.getKey()));
-                    item.put("hex", colorProfile(entry.getKey()).hex());
+                    item.put("hex", ColorPaletteResolver.resolve(entry.getKey()).hex());
                     item.put("count", entry.getValue().imageCount);
                     return item;
                 })
@@ -160,8 +160,8 @@ public class DashboardService {
         double green = averageFamilyRatio(records, Set.of("green"));
         double cyan = averageFamilyRatio(records, Set.of("cyan", "blue"));
         double red = averageFamilyRatio(records, Set.of("red"));
-        double saturation = averageColorMetric(records, ColorProfile::saturation);
-        double brightness = averageColorMetric(records, ColorProfile::brightness);
+        double saturation = averageColorMetric(records, ColorPaletteResolver.ColorProfile::saturation);
+        double brightness = averageColorMetric(records, ColorPaletteResolver.ColorProfile::brightness);
 
         List<Map<String, Object>> indicators = List.of(
                 indicator("黄色使用", yellow),
@@ -413,7 +413,7 @@ public class DashboardService {
         return round(records.stream().mapToDouble(record -> familyRatio(record, families)).average().orElse(0.0));
     }
 
-    private double averageColorMetric(List<DatasetImageRecord> records, Function<ColorProfile, Double> metric) {
+    private double averageColorMetric(List<DatasetImageRecord> records, Function<ColorPaletteResolver.ColorProfile, Double> metric) {
         if (records.isEmpty()) {
             return 0.0;
         }
@@ -422,7 +422,7 @@ public class DashboardService {
         for (DatasetImageRecord record : records) {
             double recordValue = 0.0;
             for (DatasetColorDistributionItem item : parseColorDistribution(record.getBuildingColorDistributionJson())) {
-                ColorProfile profile = colorProfile(item.getColor());
+                ColorPaletteResolver.ColorProfile profile = ColorPaletteResolver.resolve(item.getColor());
                 recordValue += metric.apply(profile) * safeRatio(item.getRatio());
             }
             total += recordValue;
@@ -433,7 +433,7 @@ public class DashboardService {
     private double familyRatio(DatasetImageRecord record, Set<String> families) {
         double total = 0.0;
         for (DatasetColorDistributionItem item : parseColorDistribution(record.getBuildingColorDistributionJson())) {
-            if (families.contains(colorProfile(item.getColor()).family())) {
+            if (families.contains(ColorPaletteResolver.resolve(item.getColor()).family())) {
                 total += safeRatio(item.getRatio());
             }
         }
@@ -540,55 +540,8 @@ public class DashboardService {
         return Math.round(value * 10000.0) / 10000.0;
     }
 
-    private ColorProfile colorProfile(String colorName) {
-        String name = colorName == null ? "" : colorName.toLowerCase(Locale.ROOT);
-        if (name.contains("金") || name.contains("土黄")) {
-            return new ColorProfile("#c9a227", "gold", 72.0, 72.0);
-        }
-        if (name.contains("黄")) {
-            return new ColorProfile("#f3b746", "yellow", 80.0, 82.0);
-        }
-        if (name.contains("青绿")) {
-            return new ColorProfile("#4f8f6f", "cyan", 58.0, 58.0);
-        }
-        if (name.contains("青")) {
-            return new ColorProfile("#5a7fb4", "cyan", 52.0, 60.0);
-        }
-        if (name.contains("蓝")) {
-            return new ColorProfile("#4d79a7", "blue", 56.0, 60.0);
-        }
-        if (name.contains("绿")) {
-            return new ColorProfile("#5e9c45", "green", 60.0, 55.0);
-        }
-        if (name.contains("红")) {
-            return new ColorProfile("#c4473a", "red", 70.0, 64.0);
-        }
-        if (name.contains("棕")) {
-            return new ColorProfile("#7a5536", "brown", 48.0, 42.0);
-        }
-        if (name.contains("米白")) {
-            return new ColorProfile("#efe5cf", "white", 18.0, 90.0);
-        }
-        if (name.contains("白")) {
-            return new ColorProfile("#f2eada", "white", 12.0, 92.0);
-        }
-        if (name.contains("灰黑")) {
-            return new ColorProfile("#4a4a4a", "black", 8.0, 28.0);
-        }
-        if (name.contains("黑")) {
-            return new ColorProfile("#333333", "black", 6.0, 20.0);
-        }
-        if (name.contains("灰")) {
-            return new ColorProfile("#888888", "gray", 5.0, 53.0);
-        }
-        return new ColorProfile("#999999", "neutral", 30.0, 55.0);
-    }
-
     private static class ColorAggregate {
         private long imageCount;
         private double totalRatio;
-    }
-
-    private record ColorProfile(String hex, String family, Double saturation, Double brightness) {
     }
 }

@@ -110,7 +110,12 @@ python api_server.py
 ./mvnw spring-boot:run
 ```
 
-Windows 环境也可以直接使用 `start_python.bat` 和 `start_java.bat`。
+启动脚本：
+
+- Windows: `start_python.bat` / `start_java.bat`
+- macOS: `start_python.command` / `start_java.command`
+- Linux: `install_linux.sh` / `start_python.sh` / `start_java.sh`
+- 接口测试页: `acasb-frontend/api-test.html`
 
 ### 5. 健康检查
 
@@ -326,7 +331,21 @@ curl -X POST http://localhost:8080/api/dataset/upload-record \
 
 ## 鉴权说明
 
-项目保留了 JWT 拦截器与启动时打印 Token 的逻辑，但当前 `AuthInterceptor` 中 `enableJwt=false`，默认不会真正拦截请求。文档和接口示例按“默认关闭鉴权”描述。
+当前默认启用 JWT 鉴权，`/api/**` 和 `/data/**` 都会被拦截。
+
+相关配置：
+
+```properties
+auth.jwt.enabled=true
+auth.jwt.secret=请设置为稳定长密钥
+auth.jwt.expires-hours=720
+```
+
+说明：
+
+- Java 服务启动后会在控制台打印当前实例的 Bearer Token
+- 如果 `auth.jwt.secret` 固定，重启后仍可使用同一密钥体系
+- 生产环境建议通过 `install_linux.sh` 自动生成密钥，再手动备份 `config.properties`
 
 ## 文档入口
 
