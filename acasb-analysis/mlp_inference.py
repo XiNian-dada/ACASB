@@ -8,6 +8,7 @@ from ancient_arch_extractor import AncientArchExtractor
 import numpy as np
 import joblib
 import logging
+from resnet_hybrid_pipeline import HybridClassifier, ResNet18FeatureExtractor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,16 +111,73 @@ class MLPInference:
                 "texture_complexity": 0.0
             }
 
+class HybridInference:
+    def __init__(self, device: str = "cpu"):
+        self.device = device
+        self.extractor = None
+        self.model = None
+        self.model_path = os.path.join(current_dir, "models", "resnet_hybrid_bundle.pkl")
+
+    def load_model(self):
+        try:
+            if not os.path.exists(self.model_path):
+                logger.error("Hybrid model bundle not found!")
+                return False
+            self.model = HybridClassifier.load(self.model_path)
+            self.extractor = ResNet18FeatureExtractor(device=self.device)
+            logger.info(f"Hybrid model loaded from: {self.model_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load hybrid model: {e}")
+            return False
+
+    def predict(self, image_path: str):
+        try:
+            if self.model is None or self.extractor is None:
+                logger.error("Hybrid model not loaded!")
+                return {
+                    "success": False,
+                    "message": "Hybrid model not loaded",
+                    "prediction": "unknown",
+                    "confidence": 0.0,
+                    "probabilities": {}
+                }
+
+            feature_vector = self.extractor.extract_features(image_path, augmented=False)
+            result = self.model.predict_single(feature_vector)
+            return {
+                "success": True,
+                "message": "Hybrid prediction completed",
+                "prediction": result["prediction"],
+                "confidence": round(float(result["confidence"]), 4),
+                "probabilities": {
+                    label: round(float(score), 4)
+                    for label, score in result["probabilities"].items()
+                }
+            }
+        except Exception as e:
+            logger.error(f"Hybrid prediction failed: {e}")
+            return {
+                "success": False,
+                "message": f"Hybrid prediction failed: {str(e)}",
+                "prediction": "unknown",
+                "confidence": 0.0,
+                "probabilities": {}
+            }
+
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='MLP Inference for Ancient Building Classification')
     parser.add_argument('--image', type=str, help='Path to image file')
     parser.add_argument('--load-model', action='store_true', help='Load model before prediction')
+    parser.add_argument('--model-type', type=str, default='mlp', choices=['mlp', 'hybrid'],
+                        help='Local model type to use')
+    parser.add_argument('--device', type=str, default='cpu', help='Torch device for hybrid model')
     
     args = parser.parse_args()
     
-    inference = MLPInference()
+    inference = HybridInference(device=args.device) if args.model_type == 'hybrid' else MLPInference()
     
     if args.load_model:
         print("=" * 70)
@@ -148,14 +206,17 @@ if __name__ == "__main__":
         print(f"Message: {result['message']}")
         print(f"Prediction: {result['prediction']}")
         print(f"Confidence: {result['confidence']}")
-        print(f"Royal Ratio: {result['royal_ratio']}")
-        print(f"Entropy Score: {result['entropy_score']}")
-        print(f"Edge Density: {result['edge_density']}")
-        print(f"Texture Complexity: {result['texture_complexity']}")
+        if args.model_type == 'hybrid':
+            print(f"Probabilities: {result.get('probabilities', {})}")
+        else:
+            print(f"Royal Ratio: {result['royal_ratio']}")
+            print(f"Entropy Score: {result['entropy_score']}")
+            print(f"Edge Density: {result['edge_density']}")
+            print(f"Texture Complexity: {result['texture_complexity']}")
         print("=" * 70)
     else:
         print("\nUsage:")
         print("  python mlp_inference.py --image <image_path>")
         print("  python mlp_inference.py --load-model")
-        print("  python mlp_inference.py --image <image_path> --load-model")
+        print("  python mlp_inference.py --image <image_path> --load-model --model-type hybrid")
         sys.exit(0)

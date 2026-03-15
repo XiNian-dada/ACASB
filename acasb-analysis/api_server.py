@@ -4,21 +4,28 @@ import uvicorn
 import logging
 import os
 from typing import Dict, Optional
+from pathlib import Path
 from ancient_arch_extractor import AncientArchExtractor
-from mlp_inference import MLPInference
+from mlp_inference import HybridInference, MLPInference
+from resnet_hybrid_pipeline import HybridClassifier, HybridConfig, ResNet18FeatureExtractor
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import accuracy_score
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+WRAPPER_DIRS = {"dataset_fixed", "dataset", "images", "imgs"}
+DEFAULT_DATASET_DIR = str((Path(__file__).resolve().parent.parent / "datasets").resolve())
+DEFAULT_MODEL_DIR = str((Path(__file__).resolve().parent / "models").resolve())
 
 app = FastAPI(
     title="Order-Decoder API",
@@ -28,16 +35,64 @@ app = FastAPI(
 
 extractor = AncientArchExtractor()
 inference = MLPInference()
+hybrid_inference = HybridInference()
+
+
+def infer_label(image_path: Path, base_dir: Path) -> str:
+    parent = image_path.parent
+    if parent.name in WRAPPER_DIRS and parent.parent != base_dir:
+        return parent.parent.name
+    return parent.name
+
+
+def collect_hybrid_samples(base_dir: str) -> list[tuple[Path, str]]:
+    root = Path(base_dir).resolve()
+    samples: list[tuple[Path, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
+            continue
+        label = infer_label(path, root)
+        if label.startswith("."):
+            continue
+        samples.append((path, label))
+    return samples
+
+
+def build_hybrid_feature_matrix(
+    feature_extractor: ResNet18FeatureExtractor,
+    samples: list[tuple[Path, str]],
+    augment_factor: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    features: list[np.ndarray] = []
+    labels: list[str] = []
+
+    for image_path, label in samples:
+        features.append(feature_extractor.extract_features(image_path, augmented=False))
+        labels.append(label)
+        for _ in range(max(augment_factor, 0)):
+            features.append(feature_extractor.extract_features(image_path, augmented=True))
+            labels.append(label)
+
+    return np.vstack(features), np.array(labels)
 
 class ApiBaseModel(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
 class TrainRequest(ApiBaseModel):
-    base_dir: str = r"E:\Code\ACASB\datasets"
-    save_dir: str = r"E:\Code\ACASB\acasb-analysis\models"
+    base_dir: str = DEFAULT_DATASET_DIR
+    save_dir: str = DEFAULT_MODEL_DIR
+    model_type: str = "mlp"
+    augment_factor: int = 2
+    pca_components: str = "40"
+    svm_kernel: str = "rbf"
+    svm_c: float = 1.0
+    device: str = "cpu"
 
 class PredictRequest(ApiBaseModel):
     image_path: str
+    model_type: str = "mlp"
+    model_path: Optional[str] = None
+    device: str = "cpu"
 
 class TrainResponse(ApiBaseModel):
     success: bool
@@ -47,12 +102,17 @@ class TrainResponse(ApiBaseModel):
     civilian_samples: int = None
     accuracy: float = None
     model_path: str = None
+    model_type: Optional[str] = None
+    cross_val_accuracy: Optional[float] = None
+    cross_val_std: Optional[float] = None
 
 class PredictResponse(ApiBaseModel):
     success: bool
     message: str
     prediction: str = None
     confidence: float = None
+    model_type: Optional[str] = None
+    probabilities: Optional[Dict[str, float]] = None
 
 class AnalyzeResponse(ApiBaseModel):
     success: bool
@@ -88,75 +148,119 @@ async def health_check() -> Dict[str, str]:
 @app.post("/train", response_model=TrainResponse)
 async def train_model(request: TrainRequest) -> Dict:
     try:
-        logger.info("Training MLP model...")
-        
+        model_type = (request.model_type or "mlp").strip().lower()
         base_dir = request.base_dir
         save_dir = request.save_dir
-        
+
+        if model_type == "hybrid":
+            logger.info("Training experimental ResNet18 + SVM/MLP hybrid model...")
+            samples = collect_hybrid_samples(base_dir)
+            if not samples:
+                raise HTTPException(status_code=400, detail="No valid samples found in dataset")
+
+            hybrid_extractor = ResNet18FeatureExtractor(device=request.device or "cpu")
+            X, y = build_hybrid_feature_matrix(hybrid_extractor, samples, request.augment_factor)
+            logger.info("Hybrid feature matrix shape: %s", X.shape)
+
+            pca_components = float(request.pca_components) if "." in request.pca_components else int(request.pca_components)
+            config = HybridConfig(
+                pca_components=pca_components,
+                svm_kernel=request.svm_kernel,
+                svm_c=request.svm_c,
+            )
+            classifier = HybridClassifier(config=config)
+            cv_result = classifier.cross_validate(X, y, n_splits=5)
+
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=config.random_state, stratify=y
+            )
+            classifier.fit(X_train, y_train)
+            y_pred = classifier.predict(X_test)
+            accuracy = accuracy_score(y_test, y_pred)
+
+            os.makedirs(save_dir, exist_ok=True)
+            model_path = os.path.join(save_dir, "resnet_hybrid_bundle.pkl")
+            classifier.save(model_path)
+
+            result = {
+                "success": True,
+                "message": "Hybrid training completed",
+                "samples_processed": int(len(y)),
+                "accuracy": round(float(accuracy), 4),
+                "cross_val_accuracy": cv_result["mean_accuracy"],
+                "cross_val_std": cv_result["std_accuracy"],
+                "model_path": model_path,
+                "model_type": "hybrid"
+            }
+            logger.info("Hybrid training completed: expanded_samples=%s holdout_accuracy=%s", len(y), accuracy)
+            return result
+
+        logger.info("Training MLP model...")
+
         logger.info(f"Scanning dataset in: {base_dir}")
-        
+
         data = []
-        
+
         for category in ["royal", "civilian"]:
             category_dir = os.path.join(base_dir, category)
-            
+
             if not os.path.exists(category_dir):
                 logger.warning(f"Category directory not found: {category_dir}")
                 continue
-            
+
             for filename in os.listdir(category_dir):
                 if filename.endswith(('.jpg', '.jpeg', '.png')):
                     image_path = os.path.join(category_dir, filename)
-                    
+
                     try:
                         feature_dict, feature_vector = extractor.extract_features(image_path)
-                        
+
                         label = 1 if category == "royal" else 0
-                        
+
                         data.append({
                             'image_path': image_path,
                             'category': category,
                             'label': label,
                             **feature_dict
                         })
-                        
+
                         logger.info(f"Processed: {filename}")
-                        
+
                     except Exception as e:
                         logger.error(f"Failed to process {filename}: {e}")
-        
+
         df = pd.DataFrame(data)
-        
+
         logger.info(f"Total samples: {len(df)}")
         logger.info(f"Royal samples: {len(df[df['label'] == 1])}")
         logger.info(f"Civilian samples: {len(df[df['label'] == 0])}")
-        
+
         if len(df) == 0:
             raise HTTPException(status_code=400, detail="No valid samples found in dataset")
-        
+
         feature_keys = [
             "ratio_yellow", "ratio_red_1", "ratio_red_2", "ratio_blue", "ratio_green",
             "ratio_gray_white", "ratio_black",
             "h_mean", "h_std", "s_mean", "s_std", "v_mean", "v_std",
             "edge_density", "entropy", "contrast", "dissimilarity", "homogeneity", "asm"
         ]
-        
+
         X = df[feature_keys].values
         y = df['label'].values
-        
+
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
-        
+
         logger.info(f"Feature matrix shape: {X_scaled.shape}")
         logger.info(f"Labels shape: {y.shape}")
-        
+
         X_train, X_test, y_train, y_test = train_test_split(
             X_scaled, y, test_size=0.2, random_state=42, stratify=y
         )
-        
+
         logger.info(f"Training set size: {X_train.shape[0]}")
         logger.info(f"Test set size: {X_test.shape[0]}")
-        
+
         mlp = MLPClassifier(
             hidden_layer_sizes=(64, 32, 16),
             activation='relu',
@@ -172,27 +276,26 @@ async def train_model(request: TrainRequest) -> Dict:
             n_iter_no_change=10,
             verbose=True
         )
-        
+
         mlp.fit(X_train, y_train)
-        
+
         y_pred = mlp.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
-        
+
         logger.info(f"Training accuracy: {accuracy:.4f}")
         logger.info(f"Model trained successfully!")
-        
+
         os.makedirs(save_dir, exist_ok=True)
-        
+
         model_path = os.path.join(save_dir, 'mlp_model.pkl')
         scaler_path = os.path.join(save_dir, 'scaler.pkl')
-        
-        import joblib
+
         joblib.dump(mlp, model_path)
         joblib.dump(scaler, scaler_path)
-        
+
         logger.info(f"Model saved to: {model_path}")
         logger.info(f"Scaler saved to: {scaler_path}")
-        
+
         result = {
             "success": True,
             "message": "Training completed",
@@ -200,11 +303,12 @@ async def train_model(request: TrainRequest) -> Dict:
             "royal_samples": len(df[df['label'] == 1]),
             "civilian_samples": len(df[df['label'] == 0]),
             "accuracy": round(accuracy, 4),
-            "model_path": model_path
+            "model_path": model_path,
+            "model_type": "mlp"
         }
-        
+
         logger.info(f"Training completed: {len(df)} samples processed")
-        
+
         return result
         
     except HTTPException:
@@ -220,21 +324,46 @@ async def predict_image(request: PredictRequest) -> Dict:
         
         if not os.path.exists(request.image_path):
             raise HTTPException(status_code=404, detail=f"Image file not found: {request.image_path}")
-        
+
+        model_type = (request.model_type or "mlp").strip().lower()
+        if model_type == "hybrid":
+            if request.model_path:
+                hybrid_inference.model_path = request.model_path
+            hybrid_inference.device = request.device or "cpu"
+            if not hybrid_inference.load_model():
+                logger.warning("Hybrid model not loaded, attempting to load...")
+                if not hybrid_inference.load_model():
+                    raise HTTPException(status_code=500, detail="Hybrid model bundle not found. Please train the hybrid model first.")
+
+            result = hybrid_inference.predict(request.image_path)
+            logger.info(f"Hybrid prediction completed: {result['prediction']}")
+            return {
+                "success": result["success"],
+                "message": result["message"],
+                "prediction": result["prediction"],
+                "confidence": result["confidence"],
+                "model_type": "hybrid",
+                "probabilities": result.get("probabilities")
+            }
+
+        if request.model_path:
+            inference.model_path = request.model_path
+
         if not inference.load_model():
             logger.warning("Model not loaded, attempting to load...")
             if not inference.load_model():
                 raise HTTPException(status_code=500, detail="Model files not found. Please train the model first.")
-        
+
         result = inference.predict(request.image_path)
-        
+
         logger.info(f"Prediction completed: {result['prediction']}")
-        
+
         return {
             "success": result["success"],
             "message": result["message"],
             "prediction": result["prediction"],
-            "confidence": result["confidence"]
+            "confidence": result["confidence"],
+            "model_type": "mlp"
         }
         
     except HTTPException:
@@ -304,8 +433,8 @@ async def root():
         "version": "3.0.0",
         "endpoints": {
             "GET /health": "Health check",
-            "POST /train": "Train MLP model",
-            "POST /predict": "Predict building type",
+            "POST /train": "Train local model (mlp or hybrid)",
+            "POST /predict": "Predict building type (mlp or hybrid)",
             "POST /analyze": "Extract handcrafted image features",
             "GET /": "API information"
         }

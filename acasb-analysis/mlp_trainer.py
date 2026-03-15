@@ -1,11 +1,13 @@
 import os
 import sys
 from typing import Tuple
+from pathlib import Path
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 from ancient_arch_extractor import AncientArchExtractor
+from resnet_hybrid_pipeline import HybridClassifier, HybridConfig, ResNet18FeatureExtractor
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -17,6 +19,11 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+WRAPPER_DIRS = {"dataset_fixed", "dataset", "images", "imgs"}
+DEFAULT_DATASET_DIR = str((Path(current_dir).parent / "datasets").resolve())
+DEFAULT_MODEL_DIR = str((Path(current_dir) / "models").resolve())
 
 class MLPTrainer:
     def __init__(self):
@@ -192,14 +199,142 @@ class MLPTrainer:
             logger.error(f"Training pipeline failed: {e}")
             return False
 
+
+class HybridTrainer:
+    def __init__(self, device: str = "cpu"):
+        self.device = device
+        self.extractor = ResNet18FeatureExtractor(device=device)
+
+    def _infer_label(self, image_path: Path, base_dir: Path) -> str:
+        parent = image_path.parent
+        if parent.name in WRAPPER_DIRS and parent.parent != base_dir:
+            return parent.parent.name
+        return parent.name
+
+    def collect_samples(self, base_dir: str) -> list[tuple[Path, str]]:
+        root = Path(base_dir).resolve()
+        samples: list[tuple[Path, str]] = []
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
+                continue
+            label = self._infer_label(path, root)
+            if label.startswith("."):
+                continue
+            samples.append((path, label))
+        return samples
+
+    def build_feature_matrix(self, samples: list[tuple[Path, str]], augment_factor: int) -> tuple[np.ndarray, np.ndarray]:
+        features: list[np.ndarray] = []
+        labels: list[str] = []
+
+        for image_path, label in samples:
+            features.append(self.extractor.extract_features(image_path, augmented=False))
+            labels.append(label)
+            for _ in range(max(augment_factor, 0)):
+                features.append(self.extractor.extract_features(image_path, augmented=True))
+                labels.append(label)
+
+        return np.vstack(features), np.array(labels)
+
+    def run(
+        self,
+        base_dir: str,
+        save_dir: str,
+        augment_factor: int = 2,
+        pca_components: int | float = 40,
+        svm_kernel: str = "rbf",
+        svm_c: float = 1.0,
+    ) -> bool:
+        try:
+            print("=" * 70)
+            print("🚀 Starting ResNet18 + SVM/MLP Hybrid Training Pipeline")
+            print("=" * 70)
+            print(f"Dataset directory: {base_dir}")
+            print(f"Model save directory: {save_dir}")
+            print("=" * 70)
+            print()
+
+            samples = self.collect_samples(base_dir)
+            if not samples:
+                logger.error("No valid samples found in dataset!")
+                return False
+
+            X, y = self.build_feature_matrix(samples, augment_factor)
+            logger.info("Collected %s raw samples, expanded to %s feature rows", len(samples), len(y))
+            logger.info("Feature matrix shape: %s", X.shape)
+
+            config = HybridConfig(
+                pca_components=pca_components,
+                svm_kernel=svm_kernel,
+                svm_c=svm_c,
+            )
+            classifier = HybridClassifier(config=config)
+            cv_result = classifier.cross_validate(X, y, n_splits=5)
+            logger.info("Cross validation mean=%s std=%s folds=%s",
+                        cv_result["mean_accuracy"], cv_result["std_accuracy"], cv_result["fold_scores"])
+
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=config.random_state, stratify=y
+            )
+            classifier.fit(X_train, y_train)
+            y_pred = classifier.predict(X_test)
+            accuracy = accuracy_score(y_test, y_pred)
+
+            print("\n" + "=" * 70)
+            print("Classification Report:")
+            print("=" * 70)
+            print(classification_report(y_test, y_pred))
+            print("Confusion Matrix:")
+            print(confusion_matrix(y_test, y_pred))
+
+            os.makedirs(save_dir, exist_ok=True)
+            model_path = os.path.join(save_dir, 'resnet_hybrid_bundle.pkl')
+            classifier.save(model_path)
+
+            print("\n" + "=" * 70)
+            print("✅ Hybrid training completed successfully!")
+            print("=" * 70)
+            print(f"\nModel saved to: {model_path}")
+            print(f"Raw samples processed: {len(samples)}")
+            print(f"Expanded samples: {len(y)}")
+            print(f"Cross-validation mean: {cv_result['mean_accuracy']}")
+            print(f"Cross-validation std: {cv_result['std_accuracy']}")
+            print(f"Holdout accuracy: {round(float(accuracy), 4)}")
+            print("=" * 70)
+            return True
+        except Exception as e:
+            logger.error(f"Hybrid training pipeline failed: {e}")
+            return False
+
 if __name__ == "__main__":
-    base_dir = r"E:\Code\ACASB\datasets"
-    save_dir = r"E:\Code\ACASB\acasb-analysis\models"
-    
-    trainer = MLPTrainer()
-    
+    import argparse
+
+    parser = argparse.ArgumentParser(description="ACASB local model trainer")
+    parser.add_argument("--base-dir", default=DEFAULT_DATASET_DIR)
+    parser.add_argument("--save-dir", default=DEFAULT_MODEL_DIR)
+    parser.add_argument("--model-type", default="mlp", choices=["mlp", "hybrid"])
+    parser.add_argument("--augment-factor", type=int, default=2)
+    parser.add_argument("--pca-components", default="40")
+    parser.add_argument("--svm-kernel", default="rbf", choices=["linear", "rbf", "poly", "sigmoid"])
+    parser.add_argument("--svm-c", type=float, default=1.0)
+    parser.add_argument("--device", default="cpu")
+    args = parser.parse_args()
+
     try:
-        success = trainer.run(base_dir, save_dir)
+        if args.model_type == "hybrid":
+            trainer = HybridTrainer(device=args.device)
+            pca_components = float(args.pca_components) if "." in args.pca_components else int(args.pca_components)
+            success = trainer.run(
+                args.base_dir,
+                args.save_dir,
+                augment_factor=args.augment_factor,
+                pca_components=pca_components,
+                svm_kernel=args.svm_kernel,
+                svm_c=args.svm_c,
+            )
+        else:
+            trainer = MLPTrainer()
+            success = trainer.run(args.base_dir, args.save_dir)
         
         if not success:
             print("\n❌ Training failed!")
