@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 import joblib
 import numpy as np
+from ancient_arch_extractor import AncientArchExtractor
 from sklearn.decomposition import PCA
 from sklearn.model_selection import StratifiedKFold
 from sklearn.neural_network import MLPClassifier
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
+RESNET_FEATURE_DIM = 512
+HANDCRAFTED_FEATURE_DIM = 19
 
 
 def _load_torch_stack():
@@ -35,11 +38,8 @@ def _load_torch_stack():
 
 class ResNet18FeatureExtractor:
     """
-    Experimental feature extractor based on the article workflow:
+    Deep feature extractor based on the local hybrid workflow:
     pretrained ResNet18 -> frozen backbone -> remove FC -> 512-d vector.
-
-    This pipeline is intentionally kept separate from the current production
-    MLP flow and is not imported by the main api_server.
     """
 
     def __init__(self, device: str = "cpu", image_size: int = 224):
@@ -99,9 +99,43 @@ class ResNet18FeatureExtractor:
         return features.squeeze().cpu().numpy().astype(np.float32)
 
 
+class HybridFeatureExtractor:
+    """
+    Formal local hybrid feature extractor:
+    ResNet18 deep features + 19 handcrafted building features.
+
+    The handcrafted branch intentionally stays on the original image so that
+    augmented samples only perturb the deep visual branch.
+    """
+
+    def __init__(self, device: str = "cpu", image_size: int = 224):
+        self.resnet_extractor = ResNet18FeatureExtractor(device=device, image_size=image_size)
+        self.handcrafted_extractor = AncientArchExtractor()
+        self._handcrafted_cache: dict[str, np.ndarray] = {}
+
+    def _cache_key(self, image_path: str | Path) -> str:
+        return str(Path(image_path).resolve())
+
+    def extract_handcrafted_features(self, image_path: str | Path) -> np.ndarray:
+        cache_key = self._cache_key(image_path)
+        cached = self._handcrafted_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        _, feature_vector = self.handcrafted_extractor.extract_features(str(image_path))
+        handcrafted = feature_vector.astype(np.float32)
+        self._handcrafted_cache[cache_key] = handcrafted
+        return handcrafted
+
+    def extract_features(self, image_path: str | Path, augmented: bool = False) -> np.ndarray:
+        resnet_features = self.resnet_extractor.extract_features(image_path, augmented=augmented)
+        handcrafted_features = self.extract_handcrafted_features(image_path)
+        return np.concatenate([resnet_features, handcrafted_features]).astype(np.float32)
+
+
 @dataclass
 class HybridConfig:
-    pca_components: int | float = 40
+    pca_components: int | float = 50
     svm_kernel: str = "rbf"
     svm_c: float = 1.0
     svm_gamma: str = "scale"
@@ -112,17 +146,27 @@ class HybridConfig:
     mlp_validation_fraction: float = 0.2
     mlp_n_iter_no_change: int = 30
     random_state: int = 42
+    resnet_feature_dim: int = RESNET_FEATURE_DIM
+    handcrafted_feature_dim: int = HANDCRAFTED_FEATURE_DIM
 
 
 class HybridClassifier:
     """
-    Experimental classifier mirroring the article:
-    ResNet features -> StandardScaler -> PCA -> SVM + MLP -> soft voting.
+    Local classifier for the formal hybrid route:
+    ResNet features -> PCA
+    handcrafted 19-d features -> scaling
+    fused vector -> SVM + MLP -> soft voting.
+
+    The class still supports legacy 512-d ResNet-only bundles so older local
+    artifacts remain loadable.
     """
 
     def __init__(self, config: HybridConfig | None = None):
         self.config = config or HybridConfig()
         self.scaler = StandardScaler()
+        self.resnet_scaler = StandardScaler()
+        self.handcrafted_scaler = StandardScaler()
+        self.final_scaler = StandardScaler()
         self.pca = PCA(
             n_components=self.config.pca_components,
             random_state=self.config.random_state,
@@ -151,22 +195,83 @@ class HybridClassifier:
         )
         self.label_encoder = LabelEncoder()
         self._is_fitted = False
+        self.feature_layout = "unknown"
+
+    def _infer_feature_layout(self, X: np.ndarray) -> str:
+        if X.ndim != 2:
+            raise ValueError("HybridClassifier expects a 2D feature matrix")
+
+        width = int(X.shape[1])
+        fused_width = self.config.resnet_feature_dim + self.config.handcrafted_feature_dim
+        if width == self.config.resnet_feature_dim:
+            return "resnet_only"
+        if width == fused_width:
+            return "fused"
+        if width > self.config.resnet_feature_dim:
+            return "fused"
+        raise ValueError(f"Unsupported feature width: {width}")
+
+    def _split_fused_features(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        resnet_width = self.config.resnet_feature_dim
+        handcrafted_width = self.config.handcrafted_feature_dim
+        if X.shape[1] < resnet_width + handcrafted_width:
+            raise ValueError(
+                "Fused feature matrix is shorter than expected: "
+                f"{X.shape[1]} < {resnet_width + handcrafted_width}"
+            )
+        resnet_part = X[:, :resnet_width]
+        handcrafted_part = X[:, resnet_width:resnet_width + handcrafted_width]
+        return resnet_part, handcrafted_part
+
+    def _prepare_train_features(self, X: np.ndarray) -> np.ndarray:
+        layout = self._infer_feature_layout(X)
+        self.feature_layout = layout
+
+        if layout == "resnet_only":
+            X_scaled = self.scaler.fit_transform(X)
+            return self.pca.fit_transform(X_scaled)
+
+        resnet_part, handcrafted_part = self._split_fused_features(X)
+        resnet_scaled = self.resnet_scaler.fit_transform(resnet_part)
+        resnet_pca = self.pca.fit_transform(resnet_scaled)
+        handcrafted_scaled = self.handcrafted_scaler.fit_transform(handcrafted_part)
+        fused = np.hstack([resnet_pca, handcrafted_scaled])
+        return self.final_scaler.fit_transform(fused)
+
+    def _prepare_inference_features(self, X: np.ndarray) -> np.ndarray:
+        layout = self._infer_feature_layout(X)
+        if self.feature_layout == "unknown":
+            raise RuntimeError("HybridClassifier feature layout is unknown")
+        if layout != self.feature_layout:
+            raise ValueError(
+                "Feature layout mismatch: "
+                f"model expects {self.feature_layout}, input is {layout}"
+            )
+
+        if layout == "resnet_only":
+            X_scaled = self.scaler.transform(X)
+            return self.pca.transform(X_scaled)
+
+        resnet_part, handcrafted_part = self._split_fused_features(X)
+        resnet_scaled = self.resnet_scaler.transform(resnet_part)
+        resnet_pca = self.pca.transform(resnet_scaled)
+        handcrafted_scaled = self.handcrafted_scaler.transform(handcrafted_part)
+        fused = np.hstack([resnet_pca, handcrafted_scaled])
+        return self.final_scaler.transform(fused)
 
     def fit(self, X: np.ndarray, y: Iterable[str]) -> "HybridClassifier":
         encoded = self.label_encoder.fit_transform(list(y))
-        X_scaled = self.scaler.fit_transform(X)
-        X_pca = self.pca.fit_transform(X_scaled)
-        self.svm.fit(X_pca, encoded)
-        self.mlp.fit(X_pca, encoded)
+        prepared = self._prepare_train_features(X)
+        self.svm.fit(prepared, encoded)
+        self.mlp.fit(prepared, encoded)
         self._is_fitted = True
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         self._ensure_fitted()
-        X_scaled = self.scaler.transform(X)
-        X_pca = self.pca.transform(X_scaled)
-        svm_proba = self.svm.predict_proba(X_pca)
-        mlp_proba = self.mlp.predict_proba(X_pca)
+        prepared = self._prepare_inference_features(X)
+        svm_proba = self.svm.predict_proba(prepared)
+        mlp_proba = self.mlp.predict_proba(prepared)
         return (svm_proba + mlp_proba) / 2.0
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -215,10 +320,14 @@ class HybridClassifier:
         payload = {
             "config": self.config,
             "scaler": self.scaler,
+            "resnet_scaler": self.resnet_scaler,
+            "handcrafted_scaler": self.handcrafted_scaler,
+            "final_scaler": self.final_scaler,
             "pca": self.pca,
             "svm": self.svm,
             "mlp": self.mlp,
             "label_encoder": self.label_encoder,
+            "feature_layout": self.feature_layout,
         }
         joblib.dump(payload, output_path)
 
@@ -226,11 +335,18 @@ class HybridClassifier:
     def load(cls, model_path: str | Path) -> "HybridClassifier":
         payload = joblib.load(model_path)
         model = cls(config=payload["config"])
-        model.scaler = payload["scaler"]
+        model.scaler = payload.get("scaler", model.scaler)
+        model.resnet_scaler = payload.get("resnet_scaler", model.resnet_scaler)
+        model.handcrafted_scaler = payload.get("handcrafted_scaler", model.handcrafted_scaler)
+        model.final_scaler = payload.get("final_scaler", model.final_scaler)
         model.pca = payload["pca"]
         model.svm = payload["svm"]
         model.mlp = payload["mlp"]
         model.label_encoder = payload["label_encoder"]
+        model.feature_layout = payload.get(
+            "feature_layout",
+            "resnet_only" if "resnet_scaler" not in payload else "fused",
+        )
         model._is_fitted = True
         return model
 

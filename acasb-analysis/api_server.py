@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from pathlib import Path
 from ancient_arch_extractor import AncientArchExtractor
 from mlp_inference import HybridInference, MLPInference
-from resnet_hybrid_pipeline import HybridClassifier, HybridConfig, ResNet18FeatureExtractor
+from resnet_hybrid_pipeline import HybridClassifier, HybridConfig, HybridFeatureExtractor
 import joblib
 import numpy as np
 import pandas as pd
@@ -59,7 +59,7 @@ def collect_hybrid_samples(base_dir: str) -> list[tuple[Path, str]]:
 
 
 def build_hybrid_feature_matrix(
-    feature_extractor: ResNet18FeatureExtractor,
+    feature_extractor: HybridFeatureExtractor,
     samples: list[tuple[Path, str]],
     augment_factor: int,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -83,7 +83,7 @@ class TrainRequest(ApiBaseModel):
     save_dir: str = DEFAULT_MODEL_DIR
     model_type: str = "mlp"
     augment_factor: int = 2
-    pca_components: str = "40"
+    pca_components: str = "50"
     svm_kernel: str = "rbf"
     svm_c: float = 1.0
     device: str = "cpu"
@@ -158,7 +158,7 @@ async def train_model(request: TrainRequest) -> Dict:
             if not samples:
                 raise HTTPException(status_code=400, detail="No valid samples found in dataset")
 
-            hybrid_extractor = ResNet18FeatureExtractor(device=request.device or "cpu")
+            hybrid_extractor = HybridFeatureExtractor(device=request.device or "cpu")
             X, y = build_hybrid_feature_matrix(hybrid_extractor, samples, request.augment_factor)
             logger.info("Hybrid feature matrix shape: %s", X.shape)
 

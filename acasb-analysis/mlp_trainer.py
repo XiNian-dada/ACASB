@@ -7,7 +7,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 from ancient_arch_extractor import AncientArchExtractor
-from resnet_hybrid_pipeline import HybridClassifier, HybridConfig, ResNet18FeatureExtractor
+from resnet_hybrid_pipeline import HybridClassifier, HybridConfig, HybridFeatureExtractor
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -203,7 +203,7 @@ class MLPTrainer:
 class HybridTrainer:
     def __init__(self, device: str = "cpu"):
         self.device = device
-        self.extractor = ResNet18FeatureExtractor(device=device)
+        self.extractor = HybridFeatureExtractor(device=device)
 
     def _infer_label(self, image_path: Path, base_dir: Path) -> str:
         parent = image_path.parent
@@ -241,7 +241,7 @@ class HybridTrainer:
         base_dir: str,
         save_dir: str,
         augment_factor: int = 2,
-        pca_components: int | float = 40,
+        pca_components: int | float = 50,
         svm_kernel: str = "rbf",
         svm_c: float = 1.0,
     ) -> bool:
@@ -314,7 +314,7 @@ if __name__ == "__main__":
     parser.add_argument("--save-dir", default=DEFAULT_MODEL_DIR)
     parser.add_argument("--model-type", default="mlp", choices=["mlp", "hybrid"])
     parser.add_argument("--augment-factor", type=int, default=2)
-    parser.add_argument("--pca-components", default="40")
+    parser.add_argument("--pca-components", default="50")
     parser.add_argument("--svm-kernel", default="rbf", choices=["linear", "rbf", "poly", "sigmoid"])
     parser.add_argument("--svm-c", type=float, default=1.0)
     parser.add_argument("--device", default="cpu")
