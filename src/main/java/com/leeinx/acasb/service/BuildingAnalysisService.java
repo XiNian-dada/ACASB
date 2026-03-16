@@ -10,6 +10,10 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.util.Set;
 import java.util.List;
+import java.util.Collection;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class BuildingAnalysisService extends ServiceImpl<BuildingAnalysisMapper, BuildingAnalysis> {
@@ -48,6 +52,30 @@ public class BuildingAnalysisService extends ServiceImpl<BuildingAnalysisMapper,
     
     public BuildingAnalysis getAnalysisById(Long id) {
         return getById(id);
+    }
+
+    public BuildingAnalysis getByImagePath(String imagePath) {
+        if (!StringUtils.hasText(imagePath)) {
+            return null;
+        }
+        return getOne(new QueryWrapper<BuildingAnalysis>()
+                .eq("image_path", imagePath)
+                .last("LIMIT 1"));
+    }
+
+    public Map<String, BuildingAnalysis> mapByImagePaths(Collection<String> imagePaths) {
+        if (imagePaths == null || imagePaths.isEmpty()) {
+            return Map.of();
+        }
+        List<String> normalizedPaths = imagePaths.stream()
+                .filter(StringUtils::hasText)
+                .distinct()
+                .toList();
+        if (normalizedPaths.isEmpty()) {
+            return Map.of();
+        }
+        return list(new QueryWrapper<BuildingAnalysis>().in("image_path", normalizedPaths)).stream()
+                .collect(Collectors.toMap(BuildingAnalysis::getImagePath, Function.identity(), (left, right) -> left));
     }
     
     public List<BuildingAnalysis> getAnalysesByField(String field, String order, Integer limit) {

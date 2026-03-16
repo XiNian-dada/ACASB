@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leeinx.acasb.dto.DatasetColorDistributionItem;
+import com.leeinx.acasb.entity.BuildingAnalysis;
 import com.leeinx.acasb.entity.DatasetImageRecord;
 import com.leeinx.acasb.mapper.DatasetImageRecordMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,12 +27,14 @@ import java.util.Map;
 @Service
 public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMapper, DatasetImageRecord> {
     private final ObjectMapper objectMapper;
+    private final BuildingAnalysisService buildingAnalysisService;
 
     @Value("${app.dataset-storage-folder:./dataset-storage}")
     private String datasetStorageFolder;
 
-    public DatasetImageRecordService(ObjectMapper objectMapper) {
+    public DatasetImageRecordService(ObjectMapper objectMapper, BuildingAnalysisService buildingAnalysisService) {
         this.objectMapper = objectMapper;
+        this.buildingAnalysisService = buildingAnalysisService;
     }
 
     public DatasetImageRecord saveOrUpdateByDatasetAndRelativePath(DatasetImageRecord record) {
@@ -142,6 +145,11 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
     }
 
     public Map<String, Object> buildRecordView(DatasetImageRecord record) {
+        BuildingAnalysis analysis = buildingAnalysisService.getByImagePath(buildAnalysisImagePath(record));
+        return buildRecordView(record, analysis);
+    }
+
+    public Map<String, Object> buildRecordView(DatasetImageRecord record, BuildingAnalysis analysis) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id", record.getId());
         item.put("datasetName", record.getDatasetName());
@@ -175,10 +183,23 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
         item.put("analysisStatus", record.getAnalysisStatus());
         item.put("errorMessage", record.getErrorMessage());
         item.put("imageIndex", record.getImageIndex());
+        item.put("traditionalFeatures", buildTraditionalFeatures(analysis));
         item.put("rawMetadata", parseRawMetadataWithHex(record.getRawMetadataJson()));
         item.put("createTime", record.getCreateTime());
         item.put("updateTime", record.getUpdateTime());
         return item;
+    }
+
+    public List<Map<String, Object>> buildRecordViews(List<DatasetImageRecord> records) {
+        if (records == null || records.isEmpty()) {
+            return List.of();
+        }
+        Map<String, BuildingAnalysis> analysisMap = buildingAnalysisService.mapByImagePaths(
+                records.stream().map(this::buildAnalysisImagePath).toList()
+        );
+        return records.stream()
+                .map(record -> buildRecordView(record, analysisMap.get(buildAnalysisImagePath(record))))
+                .toList();
     }
 
     public Map<String, Object> buildOverviewStats(List<DatasetImageRecord> records) {
@@ -428,6 +449,45 @@ public class DatasetImageRecordService extends ServiceImpl<DatasetImageRecordMap
                 .map(part -> UriUtils.encodePathSegment(part, StandardCharsets.UTF_8))
                 .reduce((left, right) -> left + "/" + right)
                 .orElse("");
+    }
+
+    private String buildAnalysisImagePath(DatasetImageRecord record) {
+        if (record == null || !StringUtils.hasText(record.getDatasetName()) || !StringUtils.hasText(record.getRelativePath())) {
+            return null;
+        }
+        return "/media/dataset/" + record.getDatasetName() + "/" + record.getRelativePath().replace("\\", "/");
+    }
+
+    private Map<String, Object> buildTraditionalFeatures(BuildingAnalysis analysis) {
+        if (analysis == null) {
+            return null;
+        }
+        Map<String, Object> features = new LinkedHashMap<>();
+        features.put("analysisId", analysis.getId());
+        features.put("imagePath", analysis.getImagePath());
+        features.put("ratioYellow", analysis.getRatioYellow());
+        features.put("ratioRed1", analysis.getRatioRed1());
+        features.put("ratioRed2", analysis.getRatioRed2());
+        features.put("ratioBlue", analysis.getRatioBlue());
+        features.put("ratioGreen", analysis.getRatioGreen());
+        features.put("ratioGrayWhite", analysis.getRatioGrayWhite());
+        features.put("ratioBlack", analysis.getRatioBlack());
+        features.put("hMean", analysis.getHMean());
+        features.put("hStd", analysis.getHStd());
+        features.put("sMean", analysis.getSMean());
+        features.put("sStd", analysis.getSStd());
+        features.put("vMean", analysis.getVMean());
+        features.put("vStd", analysis.getVStd());
+        features.put("edgeDensity", analysis.getEdgeDensity());
+        features.put("entropy", analysis.getEntropy());
+        features.put("contrast", analysis.getContrast());
+        features.put("dissimilarity", analysis.getDissimilarity());
+        features.put("homogeneity", analysis.getHomogeneity());
+        features.put("asm", analysis.getAsm());
+        features.put("royalRatio", analysis.getRoyalRatio());
+        features.put("createTime", analysis.getCreateTime());
+        features.put("updateTime", analysis.getUpdateTime());
+        return features;
     }
 
     private Path resolveCurrentStoredImage(DatasetImageRecord record) {

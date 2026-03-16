@@ -131,11 +131,11 @@ public class DatasetController {
         );
 
         Map<String, Object> result = new LinkedHashMap<>();
-            result.put("total", total);
+        result.put("total", total);
         result.put("limit", limit == null ? 20 : Math.min(limit, 200));
         result.put("offset", offset == null ? 0 : Math.max(offset, 0));
         result.put("note", "relativePath/groupRelativePath 为 ASCII 规范路径，originalRelativePath/originalGroupRelativePath 保留原始中文路径");
-        result.put("items", records.stream().map(datasetImageRecordService::buildRecordView).toList());
+        result.put("items", datasetImageRecordService.buildRecordViews(records));
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
